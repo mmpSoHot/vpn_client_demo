@@ -129,7 +129,7 @@ class _VipRechargePageState extends State<VipRechargePage> {
                       ),
                       SizedBox(height: 4),
                       Text(
-                        '享受无限流量、专属节点等特权',
+                        '享受高速代理、专属节点等特权',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 14,

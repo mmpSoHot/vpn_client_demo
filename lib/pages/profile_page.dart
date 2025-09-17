@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'login_page.dart';
+import 'statistics_page.dart';
 import '../services/user_service.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -473,7 +474,14 @@ class _ProfilePageState extends State<ProfilePage> {
         'icon': Icons.history,
         'title': '使用记录',
         'subtitle': '查看历史使用情况',
-        'onTap': () {},
+        'onTap': () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const StatisticsPage(),
+            ),
+          );
+        },
       },
       {
         'icon': Icons.help_outline,

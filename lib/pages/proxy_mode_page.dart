@@ -16,25 +16,13 @@ class _ProxyModePageState extends State<ProxyModePage> {
       'description': '所有网络流量都通过代理',
       'icon': Icons.public,
       'color': const Color(0xFF007AFF),
-    },
-    {
-      'name': '智能模式',
-      'description': '仅国外网站通过代理',
-      'icon': Icons.psychology,
-      'color': const Color(0xFF4CAF50),
-    },
+    },   
     {
       'name': '规则模式',
       'description': '根据自定义规则选择代理',
       'icon': Icons.rule,
       'color': const Color(0xFFFF9800),
-    },
-    {
-      'name': '直连模式',
-      'description': '不通过代理直接连接',
-      'icon': Icons.wifi,
-      'color': const Color(0xFF9C27B0),
-    },
+    }
   ];
 
   @override

@@ -111,6 +111,24 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF333333), size: 18),
+          onPressed: () => Navigator.pop(context),
+          tooltip: '返回',
+        ),
+        title: const Text(
+          '节点选择',
+          style: TextStyle(
+            color: Color(0xFF333333),
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
       body: Column(
         children: [
           // 搜索框
@@ -307,6 +325,18 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
     if (widget.onNodeSelected != null) {
       widget.onNodeSelected!(_selectedNode);
     }
+    
+    // 显示选择成功提示
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已选择节点：$_selectedNode'),
+        backgroundColor: const Color(0xFF4CAF50),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+    
+    // 返回到上一页
+    Navigator.pop(context);
   }
 
   Color _getPingColor(String ping) {
