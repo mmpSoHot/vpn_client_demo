@@ -32,12 +32,17 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _onUserServiceChanged() {
     // 当用户服务状态改变时，刷新用户信息
+    print('=== ProfilePage._onUserServiceChanged ===');
+    print('UserService.isLoggedIn: ${_userService.isLoggedIn}');
+    print('UserService.currentUser: ${_userService.currentUser?.username}');
     _loadUserInfo();
+    print('=== End ===');
   }
 
   void _loadUserInfo() {
     _isLoggedIn = _userService.isLoggedIn;
     _currentUser = _userService.currentUser;
+    print('ProfilePage._loadUserInfo: _isLoggedIn=$_isLoggedIn, _currentUser=${_currentUser?.username}');
     setState(() {});
   }
 

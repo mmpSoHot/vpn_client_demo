@@ -193,6 +193,32 @@ class UserService extends ChangeNotifier {
     };
   }
 
+  // 从API响应设置用户登录状态
+  Future<void> setUserFromApi(String email, {bool isVip = false, bool isAdmin = false}) async {
+    // 从email提取用户名（或使用email作为用户名）
+    final username = email.split('@')[0];
+    
+    _currentUser = User(
+      username: username,
+      email: email,
+      isVip: isVip,
+      vipExpireDate: isVip ? DateTime.now().add(const Duration(days: 365)) : null,
+    );
+    _isLoggedIn = true;
+    
+    print('=== UserService.setUserFromApi ===');
+    print('Email: $email, Username: $username, IsVip: $isVip');
+    print('_isLoggedIn: $_isLoggedIn');
+    
+    // 保存到本地存储
+    await _saveUserToStorage();
+    print('User saved to storage');
+    
+    notifyListeners();
+    print('Listeners notified, listener count: ${hasListeners}');
+    print('=== End ===');
+  }
+
   // 登出
   Future<void> logout() async {
     _currentUser = null;

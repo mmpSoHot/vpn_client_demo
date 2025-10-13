@@ -1,9 +1,35 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
+import 'package:window_manager/window_manager.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'services/user_service.dart';
+import 'services/config_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 如果是桌面平台，设置窗口大小
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    await windowManager.ensureInitialized();
+    
+    const windowOptions = WindowOptions(
+      size: Size(450, 820),        // 窗口大小：宽450，高820
+      minimumSize: Size(400, 700), // 最小尺寸
+      maximumSize: Size(550, 950), // 最大尺寸
+      center: true,                // 居中显示
+      backgroundColor: Colors.transparent,
+      skipTaskbar: false,
+      titleBarStyle: TitleBarStyle.normal,
+      title: '代理工具',
+    );
+    
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
+  
   runApp(const MyApp());
 }
 
@@ -32,6 +58,7 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   final UserService _userService = UserService();
+  final ConfigService _configService = ConfigService();
   bool _isLoading = true;
   bool _isLoggedIn = false;
 
@@ -42,8 +69,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   Future<void> _checkAuthStatus() async {
-    // 初始化用户服务
-    await _userService.init();
+    // 并行初始化用户服务和配置服务
+    await Future.wait([
+      _userService.init(),
+      _configService.init(),
+    ]);
     
     // 检查登录状态
     final isLoggedIn = _userService.isLoggedIn;

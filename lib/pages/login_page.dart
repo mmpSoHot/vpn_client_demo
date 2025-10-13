@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'register_page.dart';
 import 'home_page.dart';
 import '../services/user_service.dart';
+import '../services/api_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -12,15 +13,16 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
+  final _emailController = TextEditingController(); // 邮箱
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
   bool _rememberPassword = false;
   bool _isLoading = false;
 
-  // 创建用户服务实例
+  // 创建服务实例
   final UserService _userService = UserService();
-
+  final ApiService _apiService = ApiService();
+  
   @override
   void initState() {
     super.initState();
@@ -29,7 +31,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   void dispose() {
-    _usernameController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -43,7 +45,7 @@ class _LoginPageState extends State<LoginPage> {
       setState(() {
         _rememberPassword = remember;
         if (remember && credentials['username'] != null) {
-          _usernameController.text = credentials['username']!;
+          _emailController.text = credentials['username']!;
           _passwordController.text = credentials['password'] ?? '';
         }
       });
@@ -57,8 +59,9 @@ class _LoginPageState extends State<LoginPage> {
       });
 
       try {
-        final result = await _userService.login(
-          _usernameController.text.trim(),
+        // 调用真实的登录API
+        final response = await _apiService.login(
+          _emailController.text.trim(),
           _passwordController.text,
         );
 
@@ -67,22 +70,34 @@ class _LoginPageState extends State<LoginPage> {
             _isLoading = false;
           });
 
-          if (result['success']) {
+          if (response.success) {
+            // 登录成功，解析响应数据
+            // token 和 auth_data 已在 ApiService.login 中自动保存
+            final isAdmin = response.data['is_admin'] ?? false;
+            final email = _emailController.text.trim();
+            
+            // 从API响应设置用户登录状态
+            await _userService.setUserFromApi(
+              email,
+              isVip: false,  // 可以从后端获取VIP状态
+              isAdmin: isAdmin,
+            );
+            
             // 保存记住密码设置和凭据
             await _userService.setRememberPassword(_rememberPassword);
             if (_rememberPassword) {
               await _userService.saveCredentials(
-                _usernameController.text.trim(),
+                email,
                 _passwordController.text,
               );
             } else {
               await _userService.saveCredentials('', '');
             }
 
-            // 登录成功
+            // 显示登录成功提示
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(result['message']),
+                content: Text(response.message ?? '登录成功！'),
                 backgroundColor: const Color(0xFF4CAF50),
               ),
             );
@@ -96,7 +111,7 @@ class _LoginPageState extends State<LoginPage> {
             // 登录失败
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(result['message']),
+                content: Text(response.message ?? '登录失败'),
                 backgroundColor: const Color(0xFFF44336),
               ),
             );
@@ -109,9 +124,9 @@ class _LoginPageState extends State<LoginPage> {
           });
           
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('登录失败，请稍后重试'),
-              backgroundColor: Color(0xFFF44336),
+            SnackBar(
+              content: Text('网络错误：${e.toString()}'),
+              backgroundColor: const Color(0xFFF44336),
             ),
           );
         }
@@ -152,13 +167,14 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 40),
                 
-                // 用户名输入框
+                // 邮箱输入框
                 TextFormField(
-                  controller: _usernameController,
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
-                    labelText: '用户名',
-                    hintText: '请输入用户名',
-                    prefixIcon: const Icon(Icons.person_outline, color: Color(0xFF999999)),
+                    labelText: '邮箱',
+                    hintText: '请输入完整邮箱地址',
+                    prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFF999999)),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
                       borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
@@ -176,7 +192,10 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
-                      return '请输入用户名';
+                      return '请输入邮箱';
+                    }
+                    if (!value.contains('@')) {
+                      return '请输入有效的邮箱地址';
                     }
                     return null;
                   },
