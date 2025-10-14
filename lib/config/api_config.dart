@@ -73,6 +73,7 @@ class ApiConfig {
   /// 统计相关接口
   static const String statisticsPath = '/statistics/usage';
   static const String statisticsDetailPath = '/statistics/detail';
+  static const String trafficLogPath = '/user/stat/getTrafficLog';
   
   /// 全局配置接口
   static const String guestConfigPath = '/guest/comm/config';

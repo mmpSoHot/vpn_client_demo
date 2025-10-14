@@ -216,6 +216,11 @@ class ApiService {
 
   // ==================== 统计相关接口 ====================
 
+  /// 获取流量记录日志
+  Future<ApiResponse> getTrafficLog() async {
+    return await _httpClient.get(ApiConfig.trafficLogPath);
+  }
+
   /// 获取使用统计列表
   /// [page] 页码
   /// [pageSize] 每页数量

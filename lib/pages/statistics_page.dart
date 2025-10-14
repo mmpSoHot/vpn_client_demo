@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../services/api_service.dart';
+import '../models/traffic_log_model.dart';
+import '../utils/auth_helper.dart';
 
 class StatisticsPage extends StatefulWidget {
   const StatisticsPage({super.key});
@@ -8,91 +11,119 @@ class StatisticsPage extends StatefulWidget {
 }
 
 class _StatisticsPageState extends State<StatisticsPage> {
-  final List<_UsageRecord> _items = [];
-  final ScrollController _scrollController = ScrollController();
+  final ApiService _apiService = ApiService();
+  final List<TrafficLogModel> _items = [];
   bool _isLoading = false;
-  bool _isRefreshing = false;
-  bool _hasMore = true;
-  int _page = 1;
-  final int _pageSize = 10;
 
   @override
   void initState() {
     super.initState();
-    _loadFirstPage();
-    _scrollController.addListener(_onScroll);
+    _loadTrafficLog();
   }
 
-  @override
-  void dispose() {
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (!_hasMore || _isLoading) return;
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      _loadMore();
-    }
-  }
-
-  Future<void> _loadFirstPage() async {
-    setState(() {
-      _isRefreshing = true;
-      _hasMore = true;
-      _page = 1;
-    });
-    final data = await _fetchPage(_page, _pageSize);
-    if (!mounted) return;
-    setState(() {
-      _items
-        ..clear()
-        ..addAll(data);
-      _hasMore = data.length == _pageSize;
-      _isRefreshing = false;
-    });
-  }
-
-  Future<void> _loadMore() async {
-    if (_isLoading || !_hasMore) return;
+  /// 加载流量记录
+  Future<void> _loadTrafficLog() async {
     setState(() {
       _isLoading = true;
-      _page += 1;
     });
-    final data = await _fetchPage(_page, _pageSize);
-    if (!mounted) return;
-    setState(() {
-      _items.addAll(data);
-      _hasMore = data.length == _pageSize;
-      _isLoading = false;
-    });
-  }
-
-  Future<List<_UsageRecord>> _fetchPage(int page, int pageSize) async {
-    await Future.delayed(const Duration(milliseconds: 350));
-    final List<_UsageRecord> result = [];
-    final DateTime today = DateTime.now();
-    final int start = (page - 1) * pageSize;
-    for (int i = 0; i < pageSize; i++) {
-      final day = today.subtract(Duration(days: start + i));
-      final double upMB = 5 + (start + i) * 0.3;
-      final double downMB = 600 + ((start + i) * 4.2);
-      final double ratio = 0.8;
-      result.add(_UsageRecord(date: day, uploadMB: upMB, downloadMB: downMB, ratio: ratio));
+    
+    try {
+      final response = await _apiService.getTrafficLog();
+      
+      // 检查是否未授权
+      if (mounted && !await AuthHelper.checkAndHandleAuth(context, response)) {
+        return; // 未授权，已自动跳转到登录页面
+      }
+      
+      if (response.success && response.data != null) {
+        final List<dynamic> logList = response.data;
+        final logs = logList.map((json) => TrafficLogModel.fromJson(json)).toList();
+        
+        // 按日期分组并合并同一天的记录
+        final Map<String, List<TrafficLogModel>> groupedByDate = {};
+        for (var log in logs) {
+          final date = log.recordDate;
+          if (!groupedByDate.containsKey(date)) {
+            groupedByDate[date] = [];
+          }
+          groupedByDate[date]!.add(log);
+        }
+        
+        // 合并每一天的记录
+        final mergedLogs = <TrafficLogModel>[];
+        groupedByDate.forEach((date, dayLogs) {
+          // 计算该天的总流量（已应用扣费倍率）
+          int totalD = 0;
+          int totalU = 0;
+          
+          for (var log in dayLogs) {
+            final rate = double.parse(log.serverRate);
+            totalD += (log.d * rate).toInt();
+            totalU += (log.u * rate).toInt();
+          }
+          
+          // 使用加权平均倍率
+          double totalRate = 1.0;
+          if (dayLogs.isNotEmpty) {
+            double totalBytes = 0;
+            double weightedRate = 0;
+            for (var log in dayLogs) {
+              final bytes = log.d + log.u;
+              final rate = double.parse(log.serverRate);
+              totalBytes += bytes;
+              weightedRate += bytes * rate;
+            }
+            totalRate = totalBytes > 0 ? weightedRate / totalBytes : 1.0;
+          }
+          
+          // 创建合并后的记录
+          mergedLogs.add(TrafficLogModel(
+            d: totalD,
+            u: totalU,
+            recordAt: dayLogs.first.recordAt,
+            serverRate: totalRate.toStringAsFixed(2),
+            userId: dayLogs.first.userId,
+          ));
+        });
+        
+        // 按日期降序排序
+        mergedLogs.sort((a, b) => b.recordAt.compareTo(a.recordAt));
+        
+        if (mounted) {
+          setState(() {
+            _items.clear();
+            _items.addAll(mergedLogs);
+            _isLoading = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+          if (response.message != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(response.message!),
+                backgroundColor: const Color(0xFFF44336),
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('加载失败: ${e.toString()}'),
+            backgroundColor: const Color(0xFFF44336),
+          ),
+        );
+      }
     }
-    return result;
-  }
-
-  String _formatDate(DateTime d) {
-    final y = d.year.toString().padLeft(4, '0');
-    final m = d.month.toString().padLeft(2, '0');
-    final day = d.day.toString().padLeft(2, '0');
-    return '$y-$m-$day';
-  }
-
-  String _formatMB(double mb) {
-    return '${mb.toStringAsFixed(2)} MB';
   }
 
   @override
@@ -100,7 +131,7 @@ class _StatisticsPageState extends State<StatisticsPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          '使用统计',
+          '流量统计',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF333333)),
         ),
         centerTitle: true,
@@ -110,87 +141,105 @@ class _StatisticsPageState extends State<StatisticsPage> {
       ),
       backgroundColor: const Color(0xFFF5F5F5),
       body: RefreshIndicator(
-        onRefresh: _loadFirstPage,
-        child: ListView.builder(
-          controller: _scrollController,
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          itemCount: _items.length + 1,
-          itemBuilder: (context, index) {
-            if (index == _items.length) {
-              if (_isRefreshing) {
-                return const SizedBox.shrink();
-              }
-              if (_isLoading) {
-                return _buildLoadingFooter();
-              }
-              if (!_hasMore) {
-                return _buildNoMoreFooter();
-              }
-              return const SizedBox.shrink();
-            }
-            final item = _items[index];
-            final String dateStr = _formatDate(item.date);
-            final double totalMB = (item.uploadMB + item.downloadMB) * item.ratio;
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        '记录时间',
-                        style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
-                      ),
-                      Text(
-                        dateStr,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF333333)),
+        onRefresh: _loadTrafficLog,
+        child: _isLoading && _items.isEmpty
+            ? const Center(child: CircularProgressIndicator())
+            : _items.isEmpty
+                ? ListView(
+                    children: const [
+                      SizedBox(height: 100),
+                      Center(
+                        child: Text(
+                          '暂无使用记录',
+                          style: TextStyle(color: Color(0xFF999999)),
+                        ),
                       ),
                     ],
+                  )
+                : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _items.length,
+                    itemBuilder: (context, index) {
+                      final item = _items[index];
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // 记录时间
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  '记录时间',
+                                  style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                                ),
+                                Text(
+                                  item.recordDate,
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF333333)),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            // 上行和下行
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildMetric(
+                                    label: '实际上行',
+                                    value: item.uploadFormatted,
+                                    color: const Color(0xFF007AFF),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _buildMetric(
+                                    label: '实际下行',
+                                    value: item.downloadFormatted,
+                                    color: const Color(0xFF4CAF50),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            // 扣费倍率和总计
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildMetric(
+                                    label: '扣费倍率',
+                                    value: item.rateFormatted,
+                                    color: const Color(0xFFFF9800),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _buildMetric(
+                                    label: '总计',
+                                    value: item.totalFormatted,
+                                    color: const Color(0xFF9C27B0),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildMetric(label: '实际上行', value: _formatMB(item.uploadMB), color: const Color(0xFF007AFF)),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildMetric(label: '实际下行', value: _formatMB(item.downloadMB), color: const Color(0xFF4CAF50)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildMetric(label: '扣费倍率', value: '${item.ratio.toStringAsFixed(2)} x', color: const Color(0xFFFF9800)),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildMetric(label: '总计', value: _formatMB(totalMB), color: const Color(0xFF9C27B0)),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
       ),
     );
   }
@@ -232,45 +281,4 @@ class _StatisticsPageState extends State<StatisticsPage> {
       ),
     );
   }
-
-  Widget _buildLoadingFooter() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: const [
-          SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          SizedBox(width: 12),
-          Text('加载中...')
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNoMoreFooter() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 16),
-      child: Center(
-        child: Text(
-          '没有更多了',
-          style: TextStyle(color: Color(0xFF999999)),
-        ),
-      ),
-    );
-  }
 }
-
-class _UsageRecord {
-  final DateTime date;
-  final double uploadMB;
-  final double downloadMB;
-  final double ratio;
-
-  _UsageRecord({required this.date, required this.uploadMB, required this.downloadMB, required this.ratio});
-}
-
-
