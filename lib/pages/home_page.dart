@@ -7,6 +7,7 @@ import 'login_page.dart';
 import 'singbox_test_page.dart';
 import '../services/user_service.dart';
 import '../services/api_service.dart';
+import '../services/node_storage_service.dart';
 import '../models/subscribe_model.dart';
 import '../models/node_model.dart';
 import '../utils/auth_helper.dart';
@@ -31,6 +32,19 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     // 监听用户服务状态变化
     _userService.addListener(_onUserServiceChanged);
+    // 加载上次选择的节点
+    _loadLastSelectedNode();
+  }
+
+  /// 加载上次选择的节点
+  Future<void> _loadLastSelectedNode() async {
+    final savedNodeName = await NodeStorageService.getSelectedNodeName();
+    if (savedNodeName != null && savedNodeName.isNotEmpty) {
+      setState(() {
+        _selectedNode = savedNodeName;
+      });
+      print('📌 恢复上次选择的节点: $savedNodeName');
+    }
   }
 
   @override
@@ -71,11 +85,21 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _updateSelectedNode(String nodeName) {
+  void _updateSelectedNode(String nodeName) async {
     if (mounted) {
       setState(() {
         _selectedNode = nodeName;
       });
+
+      // 保存节点选择（仅保存名称，后续优化时可保存完整节点数据）
+      // 创建一个临时节点用于保存
+      final tempNode = NodeModel(
+        name: nodeName,
+        protocol: 'Hysteria2',
+        location: '未知',
+        rawConfig: '',
+      );
+      await NodeStorageService.saveSelectedNode(tempNode);
 
       // 显示选择成功提示
       ScaffoldMessenger.of(context).showSnackBar(
@@ -415,30 +439,41 @@ class _HomeContentState extends State<HomeContent> {
     widget.onConnectionStateChanged(widget.isProxyEnabled);
 
     try {
-      // Step 1: 获取节点（这里使用示例节点，实际应从服务器获取）
+      // Step 1: 获取节点
       if (_selectedNodeModel == null) {
-        // TODO: 从订阅URL获取节点列表
-        // 现在使用一个示例节点
-        final subscribe = _subscribeInfo;
-        if (subscribe == null) {
-          if (mounted) {
-            _showError('获取订阅信息失败');
-            setState(() {
-              _isConnecting = false;
-              _connectionStatus = '未连接';
-            });
+        // 尝试从存储中加载上次选择的节点
+        final savedNode = await NodeStorageService.getSelectedNode();
+        
+        if (savedNode != null && savedNode.rawConfig.isNotEmpty) {
+          // 使用保存的节点
+          _selectedNodeModel = savedNode;
+          print('📌 使用保存的节点: ${savedNode.name}');
+        } else {
+          // 如果没有保存的节点，使用示例节点
+          final subscribe = _subscribeInfo;
+          if (subscribe == null) {
+            if (mounted) {
+              _showError('获取订阅信息失败');
+              setState(() {
+                _isConnecting = false;
+                _connectionStatus = '未连接';
+              });
+            }
+            return;
           }
-          return;
-        }
 
-        // 使用示例节点（后续需要实现真实的节点获取逻辑）
-        _selectedNodeModel = NodeModel(
-          name: widget.selectedNode,
-          protocol: 'Hysteria2',
-          location: '香港',
-          rawConfig:
-              'hysteria2://${subscribe.uuid}@example.com:443?sni=www.bing.com&insecure=1#${widget.selectedNode}',
-        );
+          // 使用示例节点（后续需要实现真实的节点获取逻辑）
+          _selectedNodeModel = NodeModel(
+            name: widget.selectedNode,
+            protocol: 'Hysteria2',
+            location: '香港',
+            rawConfig:
+                'hysteria2://${subscribe.uuid}@example.com:443?sni=www.bing.com&insecure=1#${widget.selectedNode}',
+          );
+          
+          // 保存节点以供下次使用
+          await NodeStorageService.saveSelectedNode(_selectedNodeModel!);
+        }
       }
 
       // Step 2: 生成 sing-box 配置
