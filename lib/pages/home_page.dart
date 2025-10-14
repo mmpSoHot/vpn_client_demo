@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'proxy_mode_page.dart';
 import 'node_selection_page.dart';
 import 'vip_recharge_page.dart';
 import 'profile_page.dart';
@@ -8,7 +8,10 @@ import 'singbox_test_page.dart';
 import '../services/user_service.dart';
 import '../services/api_service.dart';
 import '../models/subscribe_model.dart';
+import '../models/node_model.dart';
 import '../utils/auth_helper.dart';
+import '../utils/singbox_manager.dart';
+import '../utils/system_proxy_helper.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -34,7 +37,31 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     // 移除监听器
     _userService.removeListener(_onUserServiceChanged);
+    
+    // 应用关闭时清理资源
+    _cleanupOnAppClose();
+    
     super.dispose();
+  }
+
+  /// 应用关闭时清理资源
+  Future<void> _cleanupOnAppClose() async {
+    try {
+      // 如果 VPN 正在连接，清理资源
+      if (_isProxyEnabled) {
+        print('🧹 应用关闭，清理 VPN 资源...');
+        
+        // 清除系统代理
+        await SystemProxyHelper.clearProxy();
+        
+        // 停止 sing-box
+        await SingboxManager.stop();
+        
+        print('✅ 资源清理完成');
+      }
+    } catch (e) {
+      print('⚠️ 清理资源时出错: $e');
+    }
   }
 
   void _onUserServiceChanged() {
@@ -108,6 +135,9 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       body: _getCurrentPage(),
+      // 添加 FloatingActionButton
+      floatingActionButton: _currentIndex == 0 ? _buildVPNFAB() : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         currentIndex: _currentIndex,
@@ -132,10 +162,14 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // 保存 HomeContent 的 key 以便调用其方法
+  final GlobalKey<_HomeContentState> _homeContentKey = GlobalKey();
+
   Widget _getCurrentPage() {
     switch (_currentIndex) {
       case 0:
         return HomeContent(
+          key: _homeContentKey,
           selectedNode: _selectedNode,
           onNodeChanged: _updateSelectedNode,
           isProxyEnabled: _isProxyEnabled,
@@ -151,6 +185,7 @@ class _HomePageState extends State<HomePage> {
         return const ProfilePage();
       default:
         return HomeContent(
+          key: _homeContentKey,
           selectedNode: _selectedNode,
           onNodeChanged: _updateSelectedNode,
           isProxyEnabled: _isProxyEnabled,
@@ -175,6 +210,64 @@ class _HomePageState extends State<HomePage> {
         return '首页';
     }
   }
+
+  /// 构建 VPN 开关 FloatingActionButton
+  Widget _buildVPNFAB() {
+    final homeContentState = _homeContentKey.currentState;
+    final isConnecting = homeContentState?._isConnecting ?? false;
+    
+    // 确定按钮颜色和图标
+    Color backgroundColor;
+    Widget icon;
+    String label;
+    String tooltip;
+
+    if (isConnecting) {
+      // 连接中 - 蓝色
+      backgroundColor = const Color(0xFF2196F3);
+      icon = const SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(
+          color: Colors.white,
+          strokeWidth: 2.5,
+        ),
+      );
+      label = '连接中...';
+      tooltip = '正在连接';
+    } else if (_isProxyEnabled) {
+      // 已连接 - 红色
+      backgroundColor = const Color(0xFFF44336);
+      icon = const Icon(Icons.power_settings_new_rounded, color: Colors.white);
+      label = '断开';
+      tooltip = '断开 VPN';
+    } else {
+      // 未连接 - 绿色
+      backgroundColor = const Color(0xFF4CAF50);
+      icon = const Icon(Icons.play_arrow_rounded, color: Colors.white);
+      label = '连接';
+      tooltip = '连接 VPN';
+    }
+
+    return FloatingActionButton.extended(
+      onPressed: isConnecting ? null : () {
+        // 调用 HomeContent 中的连接方法
+        _homeContentKey.currentState?._handleConnectionButton();
+      },
+      backgroundColor: backgroundColor,
+      icon: icon,
+      label: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      tooltip: tooltip,
+      elevation: 6,
+      highlightElevation: 12,
+    );
+  }
 }
 
 // 首页内容组件
@@ -183,6 +276,7 @@ class HomeContent extends StatefulWidget {
   final Function(String) onNodeChanged;
   final bool isProxyEnabled;
   final Function(bool) onConnectionStateChanged;
+  final VoidCallback? onConnectionButtonPressed; // 新增回调
 
   const HomeContent({
     super.key,
@@ -190,6 +284,7 @@ class HomeContent extends StatefulWidget {
     required this.onNodeChanged,
     this.isProxyEnabled = false,
     required this.onConnectionStateChanged,
+    this.onConnectionButtonPressed, // 新增参数
   });
 
   @override
@@ -202,6 +297,9 @@ class _HomeContentState extends State<HomeContent> {
   final ApiService _apiService = ApiService();
   SubscribeModel? _subscribeInfo;
   bool _isLoadingSubscribe = false;
+  bool _isConnecting = false; // 连接中的状态
+  Timer? _statusChecker; // 状态检查定时器
+  NodeModel? _selectedNodeModel; // 当前选中的节点对象
 
   @override
   void initState() {
@@ -212,6 +310,8 @@ class _HomeContentState extends State<HomeContent> {
     if (_userService.isLoggedIn) {
       _loadSubscribeInfo();
     }
+    // 启动状态监控
+    _startStatusChecker();
   }
 
   /// 加载订阅信息
@@ -255,6 +355,8 @@ class _HomeContentState extends State<HomeContent> {
   void dispose() {
     // 移除监听器
     _userService.removeListener(_onUserServiceChanged);
+    // 停止状态检查
+    _statusChecker?.cancel();
     super.dispose();
   }
 
@@ -265,17 +367,217 @@ class _HomeContentState extends State<HomeContent> {
     }
   }
 
+  /// 启动状态监控
+  void _startStatusChecker() {
+    _statusChecker = Timer.periodic(const Duration(seconds: 3), (timer) async {
+      if (!mounted) return;
+      
+      // 如果正在连接中，跳过状态检查
+      if (_isConnecting) return;
+
+      // 检查 sing-box 是否运行
+      bool singboxRunning = SingboxManager.isRunning();
+
+      // 检查系统代理是否设置
+      bool proxySet = await SystemProxyHelper.isProxySetTo('127.0.0.1', 15808);
+
+      // 更新连接状态
+      bool isConnected = singboxRunning && proxySet;
+
+      if (mounted && widget.isProxyEnabled != isConnected) {
+        // 如果 sing-box 意外停止，清除系统代理
+        if (!singboxRunning && proxySet) {
+          print('⚠️ 检测到 sing-box 异常停止，清除系统代理');
+          await SystemProxyHelper.clearProxy();
+        }
+
+        // 更新状态
+        setState(() {
+          _connectionStatus = isConnected ? '已连接' : '未连接';
+        });
+        widget.onConnectionStateChanged(isConnected);
+        
+        // 显示提示
+        if (!isConnected && widget.isProxyEnabled) {
+          _showError('VPN 连接已断开');
+        }
+      }
+    });
+  }
+
+  /// 连接 VPN
+  Future<void> _connectVPN() async {
+    setState(() {
+      _isConnecting = true;
+      _connectionStatus = '连接中...';
+    });
+    // 通知父组件刷新 FAB
+    widget.onConnectionStateChanged(widget.isProxyEnabled);
+
+    try {
+      // Step 1: 获取节点（这里使用示例节点，实际应从服务器获取）
+      if (_selectedNodeModel == null) {
+        // TODO: 从订阅URL获取节点列表
+        // 现在使用一个示例节点
+        final subscribe = _subscribeInfo;
+        if (subscribe == null) {
+          if (mounted) {
+            _showError('获取订阅信息失败');
+            setState(() {
+              _isConnecting = false;
+              _connectionStatus = '未连接';
+            });
+          }
+          return;
+        }
+
+        // 使用示例节点（后续需要实现真实的节点获取逻辑）
+        _selectedNodeModel = NodeModel(
+          name: widget.selectedNode,
+          protocol: 'Hysteria2',
+          location: '香港',
+          rawConfig:
+              'hysteria2://${subscribe.uuid}@example.com:443?sni=www.bing.com&insecure=1#${widget.selectedNode}',
+        );
+      }
+
+      // Step 2: 生成 sing-box 配置
+      await SingboxManager.generateConfigFromNode(
+        node: _selectedNodeModel!,
+        mixedPort: 15808,
+      );
+
+      // Step 3: 启动 sing-box
+      bool started = await SingboxManager.start();
+
+      if (!started) {
+        if (mounted) {
+          _showError('sing-box 启动失败，可能是端口被占用，正在重试...');
+          
+          // 等待一下再重试
+          await Future.delayed(const Duration(milliseconds: 1000));
+          
+          // 重试一次
+          started = await SingboxManager.start();
+          
+          if (!started) {
+            _showError('sing-box 启动失败，请检查是否有其他代理软件占用端口');
+            setState(() {
+              _isConnecting = false;
+              _connectionStatus = '未连接';
+            });
+            return;
+          }
+        }
+      }
+
+      // Step 4: 设置系统代理
+      bool proxySet = await SystemProxyHelper.setProxy('127.0.0.1', 15808);
+
+      if (!proxySet) {
+        // 代理设置失败，停止 sing-box
+        await SingboxManager.stop();
+        if (mounted) {
+          _showError('系统代理设置失败');
+          setState(() {
+            _isConnecting = false;
+            _connectionStatus = '未连接';
+          });
+        }
+        return;
+      }
+
+      // 连接成功
+      if (mounted) {
+        setState(() {
+          _connectionStatus = '已连接';
+          _isConnecting = false;
+        });
+        widget.onConnectionStateChanged(true);
+        _showSuccess('VPN 连接成功');
+      }
+    } catch (e) {
+      if (mounted) {
+        _showError('连接失败: $e');
+        setState(() {
+          _isConnecting = false;
+          _connectionStatus = '未连接';
+        });
+      }
+    }
+  }
+
+  /// 断开 VPN
+  Future<void> _disconnectVPN() async {
+    setState(() {
+      _isConnecting = true;
+      _connectionStatus = '断开中...';
+    });
+    // 通知父组件刷新 FAB
+    widget.onConnectionStateChanged(widget.isProxyEnabled);
+
+    try {
+      // Step 1: 清除系统代理
+      await SystemProxyHelper.clearProxy();
+
+      // Step 2: 停止 sing-box（包含清理残留进程）
+      await SingboxManager.stop();
+
+      // 等待一下确保完全停止
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // 断开成功
+      if (mounted) {
+        setState(() {
+          _connectionStatus = '未连接';
+          _isConnecting = false;
+        });
+        widget.onConnectionStateChanged(false);
+        _showSuccess('VPN 已断开');
+      }
+    } catch (e) {
+      if (mounted) {
+        _showError('断开失败: $e');
+        setState(() {
+          _isConnecting = false;
+          _connectionStatus = '未连接';
+        });
+      }
+    }
+  }
+
+  /// 显示错误提示
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('❌ $message'),
+        backgroundColor: const Color(0xFFF44336),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  /// 显示成功提示
+  void _showSuccess(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('✅ $message'),
+        backgroundColor: const Color(0xFF4CAF50),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // 主要内容区域
-        SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              // 状态卡片
-              Container(
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        children: [
+          // 状态卡片
+          Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -374,11 +676,20 @@ class _HomeContentState extends State<HomeContent> {
 
               const SizedBox(height: 20),
 
+              // 订阅信息加载中
+              if (_userService.isLoggedIn && _isLoadingSubscribe)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20.0),
+                    child: CircularProgressIndicator(),
+                  ),
+                ),
+
               // 订阅信息卡片
-              if (_userService.isLoggedIn && _subscribeInfo != null)
+              if (_userService.isLoggedIn && _subscribeInfo != null && !_isLoadingSubscribe)
                 _buildSubscriptionCard(),
 
-              if (_userService.isLoggedIn && _subscribeInfo != null)
+              if (_userService.isLoggedIn && _subscribeInfo != null && !_isLoadingSubscribe)
                 const SizedBox(height: 10),
 
               // 功能按钮区域
@@ -387,125 +698,10 @@ class _HomeContentState extends State<HomeContent> {
                   // 第一行按钮
                 ],
               ),
-              const SizedBox(height: 80), // 底部留空给悬浮按钮
+              const SizedBox(height: 100), // 底部留空给 FAB
             ],
           ),
-        ),
-
-        // 悬浮连接按钮 - 精美设计
-        Positioned(
-          right: 10,
-          bottom: 0,
-          child: GestureDetector(
-            onTap: _handleConnectionButton,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // 外层光晕
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  width: widget.isProxyEnabled ? 90 : 80,
-                  height: widget.isProxyEnabled ? 90 : 80,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color:
-                        (widget.isProxyEnabled
-                                ? const Color(0xFFF44336)
-                                : const Color(0xFF4CAF50))
-                            .withOpacity(0.15),
-                  ),
-                ),
-                // 主按钮
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 70,
-                  height: 70,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      center: const Alignment(-0.3, -0.3),
-                      radius: 1.0,
-                      colors: widget.isProxyEnabled
-                          ? [
-                              const Color(0xFFFF6B6B),
-                              const Color(0xFFF44336),
-                              const Color(0xFFD32F2F),
-                            ]
-                          : [
-                              const Color(0xFF66BB6A),
-                              const Color(0xFF4CAF50),
-                              const Color(0xFF388E3C),
-                            ],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color:
-                            (widget.isProxyEnabled
-                                    ? const Color(0xFFF44336)
-                                    : const Color(0xFF4CAF50))
-                                .withOpacity(0.6),
-                        blurRadius: 25,
-                        offset: const Offset(0, 10),
-                        spreadRadius: 1,
-                      ),
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        blurRadius: 15,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
-                  ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.3),
-                        width: 2,
-                      ),
-                    ),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 200),
-                      transitionBuilder: (child, animation) {
-                        return ScaleTransition(scale: animation, child: child);
-                      },
-                      child: Icon(
-                        widget.isProxyEnabled
-                            ? Icons.power_settings_new_rounded
-                            : Icons.play_arrow_rounded,
-                        key: ValueKey(widget.isProxyEnabled),
-                        color: Colors.white,
-                        size: 36,
-                      ),
-                    ),
-                  ),
-                ),
-                // 连接状态小圆点
-                if (widget.isProxyEnabled)
-                  Positioned(
-                    top: 2,
-                    right: 2,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: const Color(0xFF4CAF50),
-                        border: Border.all(color: Colors.white, width: 2),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF4CAF50).withOpacity(0.6),
-                            blurRadius: 8,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
+        );
   }
 
   /// 构建订阅信息卡片
@@ -634,6 +830,9 @@ class _HomeContentState extends State<HomeContent> {
   }
 
   void _handleConnectionButton() {
+    // 如果正在连接中，不处理
+    if (_isConnecting) return;
+
     // 检查是否已登录
     if (!_userService.isLoggedIn) {
       // 未登录，跳转到登录页面
@@ -647,99 +846,30 @@ class _HomeContentState extends State<HomeContent> {
     // 检查是否已购买订阅
     if (_subscribeInfo == null || !_subscribeInfo!.hasSubscription) {
       // 未购买订阅，提示用户购买
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('请先购买VIP套餐'),
-          backgroundColor: Color(0xFFF44336),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      _showError('请先购买VIP套餐');
       return;
     }
 
     // 检查订阅是否已过期
     if (_subscribeInfo!.isExpired) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('您的订阅已过期，请续费'),
-          backgroundColor: Color(0xFFF44336),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      _showError('您的订阅已过期，请续费');
       return;
     }
 
     // 检查流量是否用完
     if (_subscribeInfo!.remainingTraffic <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('流量已用完，请等待重置或购买流量包'),
-          backgroundColor: Color(0xFFF44336),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      _showError('流量已用完，请等待重置或购买流量包');
       return;
     }
 
     // 已登录且已订阅，切换连接状态
-    final newState = !widget.isProxyEnabled;
-
-    setState(() {
-      _connectionStatus = newState ? '已连接' : '未连接';
-    });
-
-    // 通知父组件状态变化
-    widget.onConnectionStateChanged(newState);
-
-    // 显示连接状态提示
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(newState ? '连接成功' : '已断开连接'),
-        backgroundColor: newState
-            ? const Color(0xFF4CAF50)
-            : const Color(0xFFF44336),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    if (widget.isProxyEnabled) {
+      // 当前已连接，执行断开
+      _disconnectVPN();
+    } else {
+      // 当前未连接，执行连接
+      _connectVPN();
+    }
   }
 
-  Widget _buildFeatureButton({
-    required IconData icon,
-    required String title,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 80,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF333333),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

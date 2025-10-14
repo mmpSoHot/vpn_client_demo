@@ -37,6 +37,13 @@ dependencies:
   shared_preferences: ^2.2.2
   http: ^1.1.0
   window_manager: ^0.3.7
+  
+  # Windows 系统代理管理
+  win32: ^5.1.0
+  ffi: ^2.1.0
+  
+  # 路径处理
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:

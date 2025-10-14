@@ -97,9 +97,12 @@ class SingboxManager {
     try {
       // 检查是否已经运行
       if (_process != null) {
-        print('⚠️ sing-box 已在运行中');
-        return false;
+        print('⚠️ sing-box 已在运行中，先停止旧进程');
+        await stop();
       }
+
+      // 强制清理所有可能残留的 sing-box 进程
+      await _killAllSingboxProcesses();
 
       final singboxPath = getSingboxPath();
       final configPath = getConfigPath();
@@ -193,6 +196,53 @@ class SingboxManager {
     await stop();
     await Future.delayed(const Duration(milliseconds: 500));
     return await start();
+  }
+
+  /// 清理所有残留的 sing-box 进程
+  static Future<void> _killAllSingboxProcesses() async {
+    try {
+      if (Platform.isWindows) {
+        // Windows: 使用 taskkill 强制终止所有 sing-box 进程
+        final result = await Process.run(
+          'taskkill',
+          ['/F', '/IM', 'sing-box.exe'],
+          runInShell: true,
+        );
+        
+        if (result.exitCode == 0) {
+          print('🧹 已清理残留的 sing-box 进程');
+          
+          // 等待进程完全终止，重试检查
+          for (int i = 0; i < 10; i++) {
+            await Future.delayed(const Duration(milliseconds: 200));
+            
+            // 检查进程是否还存在
+            final checkResult = await Process.run(
+              'tasklist',
+              ['/FI', 'IMAGENAME eq sing-box.exe'],
+              runInShell: true,
+            );
+            
+            if (!checkResult.stdout.toString().contains('sing-box.exe')) {
+              print('✅ sing-box 进程已完全终止');
+              break;
+            }
+            
+            if (i == 9) {
+              print('⚠️ sing-box 进程可能仍在运行');
+            }
+          }
+        }
+        // 如果没有进程在运行，taskkill 会返回非0，这是正常的
+      } else if (Platform.isLinux || Platform.isMacOS) {
+        // Linux/macOS: 使用 pkill
+        await Process.run('pkill', ['-9', 'sing-box']);
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+    } catch (e) {
+      // 忽略错误，可能是没有进程在运行
+      print('🔍 检查进程: $e');
+    }
   }
 }
 
