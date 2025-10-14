@@ -4,6 +4,7 @@ import 'node_selection_page.dart';
 import 'vip_recharge_page.dart';
 import 'profile_page.dart';
 import 'login_page.dart';
+import 'singbox_test_page.dart';
 import '../services/user_service.dart';
 import '../services/api_service.dart';
 import '../models/subscribe_model.dart';
@@ -86,13 +87,24 @@ class _HomePageState extends State<HomePage> {
         ),
         centerTitle: true,
         actions: [
-          if (_currentIndex == 0)
+          if (_currentIndex == 0) ...[
+            IconButton(
+              icon: const Icon(Icons.bug_report, color: Color(0xFF007AFF)),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SingboxTestPage()),
+                );
+              },
+              tooltip: 'Sing-box 测试',
+            ),
             IconButton(
               icon: const Icon(Icons.settings, color: Color(0xFF333333)),
               onPressed: () {
                 // 设置页面
               },
             ),
+          ],
         ],
       ),
       body: _getCurrentPage(),
@@ -329,14 +341,11 @@ class _HomeContentState extends State<HomeContent> {
                         ),
                         GestureDetector(
                           onTap: () {
-                            Navigator.push(
+                            // 使用BottomSheet显示节点选择
+                            NodeSelectionPage.show(
                               context,
-                              MaterialPageRoute(
-                                builder: (context) => NodeSelectionPage(
-                                  selectedNode: widget.selectedNode,
-                                  onNodeSelected: widget.onNodeChanged,
-                                ),
-                              ),
+                              selectedNode: widget.selectedNode,
+                              onNodeSelected: widget.onNodeChanged,
                             );
                           },
                           child: Row(

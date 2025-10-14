@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Sing-box 配置和可执行文件
+config/
+sing-box.exe
+sing-box-config.json

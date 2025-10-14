@@ -273,5 +273,19 @@ class ApiService {
       },
     );
   }
+
+  // ==================== 订阅相关接口 ====================
+
+  /// 获取订阅节点数据（Base64编码）
+  /// [subscribeUrl] 订阅链接
+  Future<String> getSubscriptionNodes(String subscribeUrl) async {
+    try {
+      final response = await _httpClient.getRaw(subscribeUrl);
+      return response;
+    } catch (e) {
+      print('获取订阅节点失败: $e');
+      return '';
+    }
+  }
 }
 

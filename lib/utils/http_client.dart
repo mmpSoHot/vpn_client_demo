@@ -291,6 +291,31 @@ class HttpClient {
       );
     }
   }
+
+  /// 获取原始响应数据（不进行JSON解析）
+  /// 用于获取订阅链接的Base64数据
+  Future<String> getRaw(String fullUrl, {Map<String, String>? headers}) async {
+    try {
+      final url = Uri.parse(fullUrl);
+      _log('GET Raw Request: $url');
+
+      final requestHeaders = await _buildHeaders(extraHeaders: headers);
+      final response = await http.get(url, headers: requestHeaders)
+          .timeout(Duration(milliseconds: ApiConfig.receiveTimeout));
+
+      _log('Raw Response Status: ${response.statusCode}');
+      
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return response.body;
+      } else {
+        _log('Raw Response Error: ${response.statusCode}');
+        return '';
+      }
+    } catch (e) {
+      _log('GET Raw Error: $e');
+      return '';
+    }
+  }
 }
 
 /// API响应封装类
