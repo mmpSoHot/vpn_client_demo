@@ -14,9 +14,9 @@ void main() async {
     await windowManager.ensureInitialized();
     
     const windowOptions = WindowOptions(
-      size: Size(450, 820),        // 窗口大小：宽450，高820
-      minimumSize: Size(400, 700), // 最小尺寸
-      maximumSize: Size(550, 950), // 最大尺寸
+      size: Size(400, 780),        // 窗口大小：宽400，高780
+      minimumSize: Size(380, 700), // 最小尺寸
+      maximumSize: Size(480, 900), // 最大尺寸
       center: true,                // 居中显示
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
