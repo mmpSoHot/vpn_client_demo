@@ -4,8 +4,8 @@ import 'node_selection_page.dart';
 import 'vip_recharge_page.dart';
 import 'profile_page.dart';
 import 'login_page.dart';
-import 'singbox_test_page.dart';
 import '../services/user_service.dart';
+import '../services/proxy_mode_service.dart';
 import '../services/api_service.dart';
 import '../services/node_storage_service.dart';
 import '../models/subscribe_model.dart';
@@ -26,6 +26,7 @@ class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
   bool _isProxyEnabled = false;
   final UserService _userService = UserService();
+  // 出站模式状态改由 HomeContent 内部管理
 
   @override
   void initState() {
@@ -34,7 +35,10 @@ class _HomePageState extends State<HomePage> {
     _userService.addListener(_onUserServiceChanged);
     // 加载上次选择的节点
     _loadLastSelectedNode();
+    // 出站模式由子组件加载
   }
+
+  
 
   /// 加载上次选择的节点
   Future<void> _loadLastSelectedNode() async {
@@ -137,26 +141,7 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         centerTitle: true,
-        actions: [
-          if (_currentIndex == 0) ...[
-            IconButton(
-              icon: const Icon(Icons.bug_report, color: Color(0xFF007AFF)),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SingboxTestPage()),
-                );
-              },
-              tooltip: 'Sing-box 测试',
-            ),
-            IconButton(
-              icon: const Icon(Icons.settings, color: Color(0xFF333333)),
-              onPressed: () {
-                // 设置页面
-              },
-            ),
-          ],
-        ],
+        actions: const [],
       ),
       body: _getCurrentPage(),
       // 添加 FloatingActionButton
@@ -324,6 +309,7 @@ class _HomeContentState extends State<HomeContent> {
   bool _isConnecting = false; // 连接中的状态
   Timer? _statusChecker; // 状态检查定时器
   NodeModel? _selectedNodeModel; // 当前选中的节点对象
+  ProxyMode _proxyMode = ProxyMode.bypassCN; // 出站模式（本地状态）
 
   @override
   void initState() {
@@ -336,6 +322,13 @@ class _HomeContentState extends State<HomeContent> {
     }
     // 启动状态监控
     _startStatusChecker();
+    // 加载出站模式
+    _loadProxyModeLocal();
+  }
+
+  Future<void> _loadProxyModeLocal() async {
+    _proxyMode = await ProxyModeService.getMode();
+    if (mounted) setState(() {});
   }
 
   /// 加载订阅信息
@@ -611,6 +604,226 @@ class _HomeContentState extends State<HomeContent> {
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
+          // 功能区块（出站模式 + 流量统计）
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.extension, color: Color(0xFF007AFF), size: 18),
+                  const SizedBox(width: 6),
+                  const Text(
+                    '功能',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF333333),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  // 出站模式卡片
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+                      constraints: const BoxConstraints(minHeight: 132),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '出站模式',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF333333),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          RadioListTile<ProxyMode>(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            value: ProxyMode.bypassCN,
+                            groupValue: _proxyMode,
+                            title: const Text('绕过大陆'),
+                            subtitle: const Padding(
+                              padding: EdgeInsets.only(top: 2),
+                              child: Text(
+                                '国内直连，其它走代理',
+                                style: TextStyle(fontSize: 12, color: Color(0xFF888888), height: 1.2),
+                              ),
+                            ),
+                            onChanged: (v) async {
+                              if (v == null) return;
+                              setState(() => _proxyMode = v);
+                              await ProxyModeService.setMode(v);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('已切换为: 智能')),
+                              );
+                              // TODO: 应用到运行中的 sing-box 配置
+                            },
+                          ),                       
+                          RadioListTile<ProxyMode>(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            value: ProxyMode.global,
+                            groupValue: _proxyMode,
+                            title: const Text('全局代理'),
+                            subtitle: const Padding(
+                              padding: EdgeInsets.only(top: 2),
+                              child: Text(
+                                '全部流量走代理',
+                                style: TextStyle(fontSize: 12, color: Color(0xFF888888), height: 1.2),
+                              ),
+                            ),
+                            onChanged: (v) async {
+                              if (v == null) return;
+                              setState(() => _proxyMode = v);
+                              await ProxyModeService.setMode(v);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('已切换为: 全局')),
+                              );
+                              // TODO: 应用到运行中的 sing-box 配置
+                            },
+                          ),
+                          const SizedBox(height: 2),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4.6),
+                  // 流量统计卡片（占位）
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+                      constraints: const BoxConstraints(minHeight: 132),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '流量统计',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF333333),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // 左侧圆环
+                              SizedBox(
+                                width: 52,
+                                height: 52,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: const [
+                                    SizedBox(
+                                      width: 52,
+                                      height: 52,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 8,
+                                        value: 0.72,
+                                        color: Color(0xFF8FA6D9), // 下载色（示意）
+                                        backgroundColor: Color(0xFFE5E7EB),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              // 右侧颜色说明
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: const [
+                                        // 上传颜色方块
+                                        SizedBox(
+                                          width: 14,
+                                          height: 8,
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(color: Color(0xFFC8CCD2), borderRadius: BorderRadius.all(Radius.circular(2))),
+                                          ),
+                                        ),
+                                        SizedBox(width: 6),
+                                        Text('上传', style: TextStyle(fontSize: 12, color: Color(0xFF888888))),
+                                      ],
+                                    ),                            
+                                    Row(
+                                      children: const [
+                                        // 下载颜色方块
+                                        SizedBox(
+                                          width: 14,
+                                          height: 8,
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(color: Color(0xFF8FA6D9), borderRadius: BorderRadius.all(Radius.circular(2))),
+                                          ),
+                                        ),
+                                        SizedBox(width: 6),
+                                        Text('下载', style: TextStyle(fontSize: 12, color: Color(0xFF888888))),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          // 实时速度（上传/下载），单位靠右
+                          Row(
+                            children: const [
+                              Icon(Icons.arrow_upward, size: 14, color: Color(0xFFC8CCD2)),
+                              SizedBox(width: 8),
+                              Text('111.35', style: TextStyle(fontSize: 14, color: Color(0xFF333333))),
+                              Spacer(),
+                              Text('KB', style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF))),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: const [
+                              Icon(Icons.arrow_downward, size: 14, color: Color(0xFF8FA6D9)),
+                              SizedBox(width: 8),
+                              Text('988.29', style: TextStyle(fontSize: 14, color: Color(0xFF333333))),
+                              Spacer(),
+                              Text('KB', style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF))),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
           // 状态卡片
           Container(
                 width: double.infinity,
