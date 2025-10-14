@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'login_page.dart';
 import 'statistics_page.dart';
 import '../services/user_service.dart';
+import '../services/api_service.dart';
+import '../models/subscribe_model.dart';
+import '../utils/auth_helper.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});

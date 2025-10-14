@@ -635,7 +635,44 @@ class _HomeContentState extends State<HomeContent> {
       return;
     }
 
-    // 已登录，切换连接状态
+    // 检查是否已购买订阅
+    if (_subscribeInfo == null || !_subscribeInfo!.hasSubscription) {
+      // 未购买订阅，提示用户购买
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('请先购买VIP套餐'),
+          backgroundColor: Color(0xFFF44336),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // 检查订阅是否已过期
+    if (_subscribeInfo!.isExpired) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('您的订阅已过期，请续费'),
+          backgroundColor: Color(0xFFF44336),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // 检查流量是否用完
+    if (_subscribeInfo!.remainingTraffic <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('流量已用完，请等待重置或购买流量包'),
+          backgroundColor: Color(0xFFF44336),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // 已登录且已订阅，切换连接状态
     final newState = !widget.isProxyEnabled;
 
     setState(() {

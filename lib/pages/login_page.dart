@@ -79,7 +79,7 @@ class _LoginPageState extends State<LoginPage> {
             // 从API响应设置用户登录状态
             await _userService.setUserFromApi(
               email,
-              isVip: false,  // 可以从后端获取VIP状态
+              isVip: false,  // VIP状态从订阅信息中获取
               isAdmin: isAdmin,
             );
             
@@ -95,18 +95,26 @@ class _LoginPageState extends State<LoginPage> {
             }
 
             // 显示登录成功提示
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(response.message ?? '登录成功！'),
-                backgroundColor: const Color(0xFF4CAF50),
-              ),
-            );
-            
-            // 跳转到首页
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (context) => const HomePage()),
-            );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(response.message ?? '登录成功！'),
+                  backgroundColor: const Color(0xFF4CAF50),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+              
+              // 延迟一下再跳转
+              await Future.delayed(const Duration(milliseconds: 500));
+              
+              // 跳转到首页（首页会自动获取订阅信息）
+              if (mounted) {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomePage()),
+                );
+              }
+            }
           } else {
             // 登录失败
             ScaffoldMessenger.of(context).showSnackBar(
