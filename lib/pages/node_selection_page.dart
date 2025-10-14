@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/node_storage_service.dart';
 import '../models/node_model.dart';
 import '../utils/singbox_manager.dart';
+import '../utils/node_latency_tester.dart';
 
 class NodeSelectionPage extends StatefulWidget {
   final String selectedNode;
@@ -40,6 +42,8 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
   
   bool _isLoading = true;
   String? _errorMessage;
+  bool _isTesting = false; // 是否正在测试延迟
+  Map<String, int> _latencyResults = {}; // 延迟测试结果
 
   List<Map<String, dynamic>> _nodes = [
     {
@@ -114,10 +118,78 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
     },
   ];
 
+  // ===================== 国旗 Emoji 辅助 =====================
+  // 规则：
+  // 1) 如果名称本身已有国旗 Emoji，则不再重复添加
+  // 2) 如果名称以国家/地区字母前缀开头（如 HK/US/JP），优先使用该前缀生成国旗
+  // 3) 否则根据名称/位置中的关键字做模糊映射
+  String _flagForNameAndLocation(String name, String location) {
+    final lowerName = name.toLowerCase();
+    // 已有国旗则返回空，避免重复
+    final hasFlag = RegExp(r"[\u{1F1E6}-\u{1F1FF}]{2}", unicode: true).hasMatch(name);
+    if (hasFlag) return '';
+
+    // 提取前缀字母（在空格或竖线 '|' 之前），如 "HK 香港|05|1.2x" 或 "US|01"
+    final prefixMatch = RegExp(r"^([a-zA-Z]{2,3})(?=\s|\||$)").firstMatch(name);
+    if (prefixMatch != null) {
+      final code = prefixMatch.group(1)!.toUpperCase();
+      final flag = _flagFromISO(code);
+      if (flag.isNotEmpty) return flag;
+    }
+
+    // 关键字映射（名称 + 位置）
+    final text = (name + ' ' + location).toLowerCase();
+    if (text.contains('香港') || text.contains('hong') || text.contains(' hk')) return '🇭🇰';
+    if (text.contains('台湾') || text.contains('taiwan') || text.contains(' tw')) return '🇹🇼';
+    if (text.contains('新加坡') || text.contains('singapore') || text.contains(' sg')) return '🇸🇬';
+    if (text.contains('日本') || text.contains('japan') || text.contains(' jp')) return '🇯🇵';
+    if (text.contains('韩国') || text.contains('korea') || text.contains(' kr')) return '🇰🇷';
+    if (text.contains('美国') || text.contains('usa') || text.contains(' us')) return '🇺🇸';
+    if (text.contains('英国') || text.contains('united kingdom') || text.contains(' uk') || text.contains(' gb')) return '🇬🇧';
+    if (text.contains('德国') || text.contains('germany') || text.contains(' de')) return '🇩🇪';
+    if (text.contains('法国') || text.contains('france') || text.contains(' fr')) return '🇫🇷';
+    if (text.contains('加拿大') || text.contains('canada') || text.contains(' ca')) return '🇨🇦';
+    if (text.contains('澳大利亚') || text.contains('australia') || text.contains(' au')) return '🇦🇺';
+    if (text.contains('印度') || text.contains('india') || text.contains(' in')) return '🇮🇳';
+    if (text.contains('俄罗斯') || text.contains('russia') || text.contains(' ru')) return '🇷🇺';
+    if (text.contains('巴西') || text.contains('brazil') || text.contains(' br')) return '🇧🇷';
+    if (text.contains('沙特') || text.contains('saudi') || text.contains(' sa')) return '🇸🇦';
+    if (text.contains('阿根廷') || text.contains('argentina') || text.contains(' ar')) return '🇦🇷';
+    if (text.contains('瑞典') || text.contains('sweden') || text.contains(' se')) return '🇸🇪';
+    if (text.contains('波兰') || text.contains('poland') || text.contains(' pl')) return '🇵🇱';
+    if (text.contains('土耳其') || text.contains('turkey') || text.contains(' tr')) return '🇹🇷';
+    if (text.contains('菲律宾') || text.contains('philippines') || text.contains(' ph')) return '🇵🇭';
+    if (text.contains('泰国') || text.contains('thailand') || text.contains(' th')) return '🇹🇭';
+    if (text.contains('越南') || text.contains('vietnam') || text.contains(' vn')) return '🇻🇳';
+    if (text.contains('马来西亚') || text.contains('malaysia') || text.contains(' my')) return '🇲🇾';
+    return '';
+  }
+
+  /// 将 ISO 两位/三位（常用两位）代码转换为国旗 Emoji（区域指示符）
+  String _flagFromISO(String code) {
+    final iso = code.length == 3 && code.toUpperCase() == 'UK' ? 'GB' : code.toUpperCase();
+    if (iso.length < 2) return '';
+    final a = iso.codeUnitAt(0);
+    final b = iso.codeUnitAt(1);
+    if (!(a >= 65 && a <= 90 && b >= 65 && b <= 90)) return '';
+    const base = 0x1F1E6; // Regional Indicator Symbol Letter A
+    final r1 = String.fromCharCode(base + (a - 65));
+    final r2 = String.fromCharCode(base + (b - 65));
+    return r1 + r2;
+  }
+
   @override
   void initState() {
     super.initState();
     _loadNodes();
+    _loadLatencyResults();
+  }
+
+  /// 刷新节点列表
+  Future<void> _refreshNodes() async {
+    await _loadNodes();
+    // 刷新后可选：自动触发一次全量测试
+    // await _testAllNodesLatency();
   }
 
   /// 加载节点列表
@@ -240,6 +312,94 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
     }
   }
 
+  /// 测试所有节点延迟
+  Future<void> _testAllNodesLatency() async {
+    setState(() {
+      // 开始测试：清空历史结果并进入全局测试中状态
+      _latencyResults.clear();
+      _isTesting = true;
+    });
+
+    try {
+      print('🔍 开始测试节点延迟...');
+      
+      // 只测试真实节点（跳过"自动选择"）
+      final realNodes = _nodes.where((n) => n['type'] != 'auto').toList();
+      
+      for (final nodeData in realNodes) {
+        final nodeModel = nodeData['nodeModel'] as NodeModel?;
+        if (nodeModel == null) continue;
+
+        // 测试延迟
+        final latency = await NodeLatencyTester.testNodeLatency(nodeModel);
+        
+        // 更新结果
+        setState(() {
+          _latencyResults[nodeData['name']] = latency;
+        });
+      }
+
+      print('✅ 延迟测试完成');
+      
+      // 保存延迟结果
+      await _saveLatencyResults();
+      
+    } catch (e) {
+      print('❌ 测试延迟失败: $e');
+    } finally {
+      setState(() {
+        _isTesting = false;
+      });
+    }
+  }
+
+  // 单个节点测试已移除，仅保留批量测试
+
+  /// 保存延迟结果
+  Future<void> _saveLatencyResults() async {
+    try {
+      final prefs = await NodeStorageService.getPreferences();
+      await prefs.setString('node_latency_results', jsonEncode(_latencyResults));
+    } catch (e) {
+      print('❌ 保存延迟结果失败: $e');
+    }
+  }
+
+  /// 加载延迟结果
+  Future<void> _loadLatencyResults() async {
+    try {
+      final prefs = await NodeStorageService.getPreferences();
+      final resultsJson = prefs.getString('node_latency_results');
+      if (resultsJson != null) {
+        final results = jsonDecode(resultsJson) as Map<String, dynamic>;
+        setState(() {
+          _latencyResults = results.map((k, v) => MapEntry(k, v as int));
+        });
+        print('📌 已加载延迟测试结果');
+      }
+    } catch (e) {
+      print('❌ 加载延迟结果失败: $e');
+    }
+  }
+
+  /// 获取节点显示的延迟
+  String _getNodeLatency(String nodeName) {
+    if (nodeName == '自动选择') return '--';
+    
+    final latency = _latencyResults[nodeName];
+    if (latency == null) return '--';
+    
+    return NodeLatencyTester.formatLatency(latency);
+  }
+
+  /// 获取节点延迟颜色
+  Color _getLatencyColor(String nodeName) {
+    if (nodeName == '自动选择') return const Color(0xFF999999);
+    
+    final latency = _latencyResults[nodeName] ?? 0;
+    return NodeLatencyTester.getLatencyColor(latency);
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -279,11 +439,23 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // 标题
+                // 标题和操作按钮
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const SizedBox(width: 48), // 占位，保持标题居中
+                    // 左侧：更新节点
+                    IconButton(
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh, color: Color(0xFF007AFF)),
+                      onPressed: _isLoading ? null : _refreshNodes,
+                      tooltip: '更新节点',
+                    ),
+                    // 中间标题
                     const Text(
                       '节点选择',
                       style: TextStyle(
@@ -292,9 +464,27 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Color(0xFF666666)),
-                      onPressed: () => Navigator.pop(context),
+                    // 右侧：测试连接与关闭组合
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: _isTesting
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.speed, color: Color(0xFF007AFF)),
+                          onPressed: _isTesting ? null : _testAllNodesLatency,
+                          tooltip: '测试连接',
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Color(0xFF666666)),
+                          onPressed: () => Navigator.pop(context),
+                          tooltip: '关闭',
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -379,30 +569,40 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
                   ),
                   child: ListTile(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    leading: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: node['color'].withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Icon(
-                        node['type'] == 'auto' ? Icons.auto_awesome : Icons.location_on,
-                        color: node['color'],
-                        size: 20,
-                      ),
-                    ),
+         
                     title: Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            node['name'],
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: isSelected ? node['color'] : const Color(0xFF333333),
-                            ),
-                            overflow: TextOverflow.ellipsis,
+                          child: Row(
+                            children: [
+                              // 国旗 Emoji（根据名称/位置推断）
+                              Builder(builder: (_) {
+                                final flag = _flagForNameAndLocation(
+                                  node['name']?.toString() ?? '',
+                                  node['location']?.toString() ?? '',
+                                );
+                                return flag.isEmpty
+                                    ? const SizedBox.shrink()
+                                    : Padding(
+                                        padding: const EdgeInsets.only(right: 6),
+                                        child: Text(
+                                          flag,
+                                          style: const TextStyle(fontSize: 16),
+                                        ),
+                                      );
+                              }),
+                              Expanded(
+                                child: Text(
+                                  node['name'],
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: isSelected ? node['color'] : const Color(0xFF333333),
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         if (node['protocol'] != null) ...[
@@ -453,25 +653,40 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (node['ping'] != '--') ...[
-                          Container(
+                        // 延迟显示 / 测试中占位
+                        Builder(builder: (_) {
+                          final text = _getNodeLatency(node['name']);
+                          // 数字统一使用绿色显示
+                          const textColor = Color(0xFF4CAF50);
+                          final isTesting = _isTesting && (text == '--');
+                          return Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: _getPingColor(node['ping']).withOpacity(0.1),
+                              color: textColor.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Text(
-                              node['ping'],
-                              style: TextStyle(
-                                color: _getPingColor(node['ping']),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                        ],
-                        if (isSelected)
+                            child: isTesting
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Text(
+                                    text,
+                                    style: const TextStyle(
+                                      color: textColor,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                          );
+                        }),
+                        // 仅显示延迟，不提供单个节点测试按钮
+                        // 选中标记
+                        if (isSelected) ...[
+                          const SizedBox(width: 8),
                           Container(
                             width: 20,
                             height: 20,
@@ -485,6 +700,7 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
                               size: 14,
                             ),
                           ),
+                        ],
                       ],
                     ),
                     onTap: () async {
@@ -588,14 +804,4 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
     );
   }
 
-  Color _getPingColor(String ping) {
-    if (ping == '--') return const Color(0xFF999999);
-    
-    final pingValue = int.tryParse(ping.replaceAll('ms', ''));
-    if (pingValue == null) return const Color(0xFF999999);
-    
-    if (pingValue < 30) return const Color(0xFF4CAF50);
-    if (pingValue < 80) return const Color(0xFFFF9800);
-    return const Color(0xFFF44336);
-  }
 }

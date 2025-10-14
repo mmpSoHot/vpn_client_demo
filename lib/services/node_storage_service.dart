@@ -7,8 +7,6 @@ import '../models/node_model.dart';
 class NodeStorageService {
   static const String _keySelectedNodeName = 'selected_node_name';
   static const String _keySelectedNodeData = 'selected_node_data';
-  static const String _keyVPNConnected = 'vpn_connected_state'; // VPN连接状态
-  static const String _keyAutoReconnect = 'auto_reconnect_enabled'; // 自动重连开关
   
   /// 保存选中的节点
   static Future<void> saveSelectedNode(NodeModel node) async {
@@ -91,6 +89,11 @@ class NodeStorageService {
     } catch (e) {
       return false;
     }
+  }
+  
+  /// 获取 SharedPreferences 实例（供其他功能使用）
+  static Future<SharedPreferences> getPreferences() async {
+    return await SharedPreferences.getInstance();
   }
 }
 
