@@ -96,6 +96,11 @@ class ApiService {
     return await _httpClient.get(ApiConfig.userInfoPath);
   }
 
+  /// 获取用户订阅信息
+  Future<ApiResponse> getSubscribe() async {
+    return await _httpClient.get(ApiConfig.getSubscribePath);
+  }
+
   /// 更新用户信息
   /// [data] 更新的用户数据
   Future<ApiResponse> updateUser(Map<String, dynamic> data) async {

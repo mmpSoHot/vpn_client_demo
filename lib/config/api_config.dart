@@ -52,6 +52,7 @@ class ApiConfig {
   static const String userInfoPath = '/user/info';
   static const String updateUserPath = '/user/update';
   static const String sendEmailVerifyPath = '/passport/comm/sendEmailVerify';
+  static const String getSubscribePath = '/user/getSubscribe';
   
   /// VIP相关接口
   static const String vipInfoPath = '/vip/info';

@@ -5,6 +5,9 @@ import 'vip_recharge_page.dart';
 import 'profile_page.dart';
 import 'login_page.dart';
 import '../services/user_service.dart';
+import '../services/api_service.dart';
+import '../models/subscribe_model.dart';
+import '../utils/auth_helper.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -45,7 +48,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _selectedNode = nodeName;
       });
-      
+
       // 显示选择成功提示
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -54,7 +57,7 @@ class _HomePageState extends State<HomePage> {
           duration: const Duration(seconds: 2),
         ),
       );
-      
+
       // 延迟一下再切换到首页，让用户看到提示
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
@@ -106,22 +109,12 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: Colors.white,
         elevation: 8,
         items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: '首页'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: '首页',
+            icon: Icon(Icons.card_membership),
+            label: '套餐',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.location_on),
-            label: '节点',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.analytics),
-            label: '统计',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: '我的',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: '我的'),
         ],
       ),
     );
@@ -141,13 +134,8 @@ class _HomePageState extends State<HomePage> {
           },
         );
       case 1:
-        return NodeSelectionPage(
-          selectedNode: _selectedNode,
-          onNodeSelected: _updateSelectedNode,
-        );
+        return const VipRechargePage();
       case 2:
-        return const StatisticsPage();
-      case 3:
         return const ProfilePage();
       default:
         return HomeContent(
@@ -166,15 +154,13 @@ class _HomePageState extends State<HomePage> {
   String _getTitle() {
     switch (_currentIndex) {
       case 0:
-        return '代理工具';
+        return '首页';
       case 1:
-        return '节点选择';
+        return 'VIP套餐';
       case 2:
-        return '使用统计';
-      case 3:
         return '我的';
       default:
-        return '代理工具';
+        return '首页';
     }
   }
 }
@@ -201,12 +187,56 @@ class HomeContent extends StatefulWidget {
 class _HomeContentState extends State<HomeContent> {
   String _connectionStatus = '未连接';
   final UserService _userService = UserService();
+  final ApiService _apiService = ApiService();
+  SubscribeModel? _subscribeInfo;
+  bool _isLoadingSubscribe = false;
 
   @override
   void initState() {
     super.initState();
     // 监听用户服务状态变化
     _userService.addListener(_onUserServiceChanged);
+    // 如果已登录，加载订阅信息
+    if (_userService.isLoggedIn) {
+      _loadSubscribeInfo();
+    }
+  }
+
+  /// 加载订阅信息
+  Future<void> _loadSubscribeInfo() async {
+    setState(() {
+      _isLoadingSubscribe = true;
+    });
+
+    try {
+      final response = await _apiService.getSubscribe();
+
+      // 检查是否未授权
+      if (mounted && !await AuthHelper.checkAndHandleAuth(context, response)) {
+        return;
+      }
+
+      if (response.success && response.data != null) {
+        if (mounted) {
+          setState(() {
+            _subscribeInfo = SubscribeModel.fromJson(response.data);
+            _isLoadingSubscribe = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoadingSubscribe = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingSubscribe = false;
+        });
+      }
+    }
   }
 
   @override
@@ -225,433 +255,370 @@ class _HomeContentState extends State<HomeContent> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          // 状态卡片
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                // 连接状态
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      '连接状态',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF333333),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: widget.isProxyEnabled ? const Color(0xFF4CAF50) : const Color(0xFFF44336),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        _connectionStatus,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+    return Stack(
+      children: [
+        // 主要内容区域
+        SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              // 状态卡片
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                
-                // 当前节点
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
                   children: [
-                    const Text(
-                      '当前节点',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF333333),
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => NodeSelectionPage(
-                              selectedNode: widget.selectedNode,
-                              onNodeSelected: widget.onNodeChanged,
-                            ),
+                    // 连接状态
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          '连接状态',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF333333),
                           ),
-                        );
-                      },
-                      child: Row(
-                        children: [
-                          Text(
-                            widget.selectedNode,
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: widget.isProxyEnabled
+                                ? const Color(0xFF4CAF50)
+                                : const Color(0xFFF44336),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            _connectionStatus,
                             style: const TextStyle(
-                              fontSize: 16,
-                              color: Color(0xFF007AFF),
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                          const SizedBox(width: 4),
-                          const Icon(
-                            Icons.arrow_forward_ios,
-                            size: 12,
-                            color: Color(0xFF007AFF),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          
-          const SizedBox(height: 20),
-          
-          // 连接按钮 - 超精美圆形设计（快速动画版）
-          Center(
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // 多层光晕效果
-                ...List.generate(3, (index) {
-                  return IgnorePointer(
-                    child: AnimatedContainer(
-                      duration: Duration(milliseconds: 200 + (index * 50)), // 大幅加快
-                      width: widget.isProxyEnabled ? 160 - (index * 15) : 140 - (index * 10),
-                      height: widget.isProxyEnabled ? 160 - (index * 15) : 140 - (index * 10),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: (widget.isProxyEnabled 
-                            ? [const Color(0xFFF44336), const Color(0xFFE57373), const Color(0xFFFFCDD2)]
-                            : [const Color(0xFF4CAF50), const Color(0xFF81C784), const Color(0xFFC8E6C9)])[index]
-                            .withOpacity(0.1 - (index * 0.02)),
-                      ),
-                    ),
-                  );
-                }),
-                
-                // 主按钮容器
-                GestureDetector(
-                  onTap: () {
-                _handleConnectionButton();
-              },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150), // 大幅加快
-                    curve: Curves.easeInOut, // 改为更快的曲线
-                    width: 130,
-                    height: 130,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        center: const Alignment(-0.3, -0.3),
-                        radius: 1.2,
-                        colors: widget.isProxyEnabled 
-                            ? [
-                                const Color(0xFFFF6B6B),
-                                const Color(0xFFF44336),
-                                const Color(0xFFD32F2F),
-                                const Color(0xFFB71C1C),
-                              ]
-                            : [
-                                const Color(0xFF66BB6A),
-                                const Color(0xFF4CAF50),
-                                const Color(0xFF388E3C),
-                                const Color(0xFF2E7D32),
-                              ],
-                        stops: const [0.0, 0.3, 0.7, 1.0],
-                      ),
-                      boxShadow: [
-                        // 主阴影
-                        BoxShadow(
-                          color: (widget.isProxyEnabled ? const Color(0xFFF44336) : const Color(0xFF4CAF50)).withOpacity(0.6),
-                          blurRadius: 30,
-                          offset: const Offset(0, 15),
-                          spreadRadius: 2,
-                        ),
-                        // 内阴影效果
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                        // 高光效果
-                        BoxShadow(
-                          color: Colors.white.withOpacity(0.2),
-                          blurRadius: 10,
-                          offset: const Offset(-3, -3),
                         ),
                       ],
                     ),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.4),
-                          width: 3,
+                    const SizedBox(height: 16),
+
+                    // 当前节点
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          '当前节点',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF333333),
+                          ),
                         ),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Colors.white.withOpacity(0.3),
-                            Colors.white.withOpacity(0.1),
-                            Colors.transparent,
-                          ],
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          // 背景纹理
-                          Positioned.fill(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(
-                                  center: const Alignment(0.2, 0.2),
-                                  radius: 0.8,
-                                  colors: [
-                                    Colors.white.withOpacity(0.1),
-                                    Colors.transparent,
-                                  ],
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => NodeSelectionPage(
+                                  selectedNode: widget.selectedNode,
+                                  onNodeSelected: widget.onNodeChanged,
                                 ),
                               ),
-                            ),
+                            );
+                          },
+                          child: Row(
+                            children: [
+                              Text(
+                                widget.selectedNode,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  color: Color(0xFF007AFF),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(
+                                Icons.arrow_forward_ios,
+                                size: 12,
+                                color: Color(0xFF007AFF),
+                              ),
+                            ],
                           ),
-                          // 主要内容
-                          Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                // 图标容器
-                                Container(
-                                  width: 50,
-                                  height: 50,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.white.withOpacity(0.2),
-                                    border: Border.all(
-                                      color: Colors.white.withOpacity(0.3),
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 200), // 大幅加快
-                                    transitionBuilder: (Widget child, Animation<double> animation) {
-                                      return RotationTransition(
-                                        turns: animation,
-                                        child: ScaleTransition(
-                                          scale: animation,
-                                          child: child,
-                                        ),
-                                      );
-                                    },
-                                    child: Icon(
-                                      widget.isProxyEnabled ? Icons.power_settings_new_rounded : Icons.play_arrow_rounded,
-                                      key: ValueKey(widget.isProxyEnabled),
-                                      color: Colors.white,
-                                      size: 28,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                // 文字
-                                AnimatedDefaultTextStyle(
-                                  duration: const Duration(milliseconds: 150), // 大幅加快
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 1.2,
-                                    shadows: [
-                                      Shadow(
-                                        color: Colors.black.withOpacity(0.3),
-                                        offset: const Offset(0, 1),
-                                        blurRadius: 2,
-                                      ),
-                                    ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-              child: Text(
-                                    widget.isProxyEnabled ? '断开' : '连接',
-                                  ),
-                                ),
-                              ],
-                            ),
+
+              const SizedBox(height: 20),
+
+              // 订阅信息卡片
+              if (_userService.isLoggedIn && _subscribeInfo != null)
+                _buildSubscriptionCard(),
+
+              if (_userService.isLoggedIn && _subscribeInfo != null)
+                const SizedBox(height: 10),
+
+              // 功能按钮区域
+              Column(
+                children: [
+                  // 第一行按钮
+                ],
+              ),
+              const SizedBox(height: 80), // 底部留空给悬浮按钮
+            ],
+          ),
+        ),
+
+        // 悬浮连接按钮 - 精美设计
+        Positioned(
+          right: 10,
+          bottom: 0,
+          child: GestureDetector(
+            onTap: _handleConnectionButton,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // 外层光晕
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  width: widget.isProxyEnabled ? 90 : 80,
+                  height: widget.isProxyEnabled ? 90 : 80,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        (widget.isProxyEnabled
+                                ? const Color(0xFFF44336)
+                                : const Color(0xFF4CAF50))
+                            .withOpacity(0.15),
+                  ),
+                ),
+                // 主按钮
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 70,
+                  height: 70,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      center: const Alignment(-0.3, -0.3),
+                      radius: 1.0,
+                      colors: widget.isProxyEnabled
+                          ? [
+                              const Color(0xFFFF6B6B),
+                              const Color(0xFFF44336),
+                              const Color(0xFFD32F2F),
+                            ]
+                          : [
+                              const Color(0xFF66BB6A),
+                              const Color(0xFF4CAF50),
+                              const Color(0xFF388E3C),
+                            ],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color:
+                            (widget.isProxyEnabled
+                                    ? const Color(0xFFF44336)
+                                    : const Color(0xFF4CAF50))
+                                .withOpacity(0.6),
+                        blurRadius: 25,
+                        offset: const Offset(0, 10),
+                        spreadRadius: 1,
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 15,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.3),
+                        width: 2,
+                      ),
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      transitionBuilder: (child, animation) {
+                        return ScaleTransition(scale: animation, child: child);
+                      },
+                      child: Icon(
+                        widget.isProxyEnabled
+                            ? Icons.power_settings_new_rounded
+                            : Icons.play_arrow_rounded,
+                        key: ValueKey(widget.isProxyEnabled),
+                        color: Colors.white,
+                        size: 36,
+                      ),
+                    ),
+                  ),
+                ),
+                // 连接状态小圆点
+                if (widget.isProxyEnabled)
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: Container(
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFF4CAF50),
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF4CAF50).withOpacity(0.6),
+                            blurRadius: 8,
                           ),
                         ],
                       ),
                     ),
                   ),
-                ),
-                
-                // 连接状态指示器 - 更精美
-                if (widget.isProxyEnabled)
-                  Positioned(
-                    top: 5,
-                    right: 5,
-                    child: TweenAnimationBuilder<double>(
-                      duration: const Duration(milliseconds: 200), // 大幅加快
-                      tween: Tween(begin: 0.0, end: 1.0),
-                      builder: (context, value, child) {
-                        return Transform.scale(
-                          scale: value,
-                          child: Container(
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
-                              ),
-                              border: Border.all(
-                                color: Colors.white,
-                                width: 2.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFF4CAF50).withOpacity(0.6),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: const Icon(
-                              Icons.check_rounded,
-                              color: Colors.white,
-                              size: 14,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                
-                // 脉冲动画效果
-                if (widget.isProxyEnabled)
-                  IgnorePointer(
-                    child: TweenAnimationBuilder<double>(
-                      duration: const Duration(milliseconds: 800), // 加快脉冲速度
-                      tween: Tween(begin: 0.8, end: 1.2),
-                      builder: (context, value, child) {
-                        return Transform.scale(
-                          scale: value,
-                          child: Container(
-                            width: 130,
-                            height: 130,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: const Color(0xFF4CAF50).withOpacity(0.1),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
               ],
             ),
           ),
-          
-          const SizedBox(height: 20),
-          
-          // 功能按钮
-          Expanded(
-            child: Column(
+        ),
+      ],
+    );
+  }
+
+  /// 构建订阅信息卡片
+  Widget _buildSubscriptionCard() {
+    if (_subscribeInfo == null) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: _subscribeInfo!.hasSubscription
+            ? const LinearGradient(
+                colors: [Color(0xFFFFD700), Color(0xFFFFA000)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : const LinearGradient(
+                colors: [Color(0xFFE0E0E0), Color(0xFFBDBDBD)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 套餐名称
+          Row(
+            children: [
+              Icon(
+                Icons.star,
+                color: _subscribeInfo!.hasSubscription
+                    ? Colors.white
+                    : const Color(0xFF666666),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _subscribeInfo!.planName,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: _subscribeInfo!.hasSubscription
+                        ? Colors.white
+                        : const Color(0xFF666666),
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          if (_subscribeInfo!.hasSubscription) ...[
+            const SizedBox(height: 12),
+
+            // 流量使用进度
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 第一行按钮
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Expanded(
-                      child: _buildFeatureButton(
-                        icon: Icons.vpn_key,
-                        title: '代理模式',
-                        color: const Color(0xFF007AFF),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const ProxyModePage(),
-                            ),
-                          );
-                        },
-                      ),
+                    Text(
+                      '已用: ${_subscribeInfo!.usedTrafficFormatted}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildFeatureButton(
-                        icon: Icons.location_on,
-                        title: '节点选择',
-                        color: const Color(0xFF4CAF50),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => NodeSelectionPage(
-                                selectedNode: widget.selectedNode,
-                                onNodeSelected: widget.onNodeChanged,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                    Text(
+                      '总计: ${_subscribeInfo!.totalTrafficFormatted}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
                   ],
                 ),
-                
-                const SizedBox(height: 12),
-                
-                // 第二行按钮
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildFeatureButton(
-                        icon: Icons.star,
-                        title: 'VIP充值',
-                        color: const Color(0xFFFF9800),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const VipRechargePage(),
-                            ),
-                          );
-                        },
-                      ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: LinearProgressIndicator(
+                    value: _subscribeInfo!.usagePercentage / 100,
+                    minHeight: 8,
+                    backgroundColor: Colors.white.withOpacity(0.3),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      _subscribeInfo!.usagePercentage > 80
+                          ? const Color(0xFFF44336)
+                          : Colors.white,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildFeatureButton(
-                        icon: Icons.analytics,
-                        title: '使用统计',
-                        color: const Color(0xFF9C27B0),
-                        onTap: () {
-                          // 使用统计页面
-                        },
-                      ),
-                    ),
-                  ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_subscribeInfo!.usagePercentage.toStringAsFixed(1)}% 已使用',
+                  style: const TextStyle(color: Colors.white, fontSize: 11),
                 ),
               ],
             ),
-          ),
+
+            const SizedBox(height: 12),
+
+            // 到期时间和重置时间
+            Text(
+              _subscribeInfo!.expireInfo,
+              style: const TextStyle(color: Colors.white, fontSize: 11),
+            ),
+            if (_subscribeInfo!.resetInfo.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                _subscribeInfo!.resetInfo,
+                style: const TextStyle(color: Colors.white, fontSize: 11),
+              ),
+            ],
+          ] else ...[
+            const SizedBox(height: 8),
+            const Text(
+              '您还未购买订阅，请先购买VIP套餐',
+              style: TextStyle(color: Color(0xFF666666), fontSize: 12),
+            ),
+          ],
         ],
       ),
     );
@@ -663,20 +630,18 @@ class _HomeContentState extends State<HomeContent> {
       // 未登录，跳转到登录页面
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => const LoginPage(),
-        ),
+        MaterialPageRoute(builder: (context) => const LoginPage()),
       );
       return;
     }
 
     // 已登录，切换连接状态
     final newState = !widget.isProxyEnabled;
-    
+
     setState(() {
       _connectionStatus = newState ? '已连接' : '未连接';
     });
-    
+
     // 通知父组件状态变化
     widget.onConnectionStateChanged(newState);
 
@@ -684,7 +649,9 @@ class _HomeContentState extends State<HomeContent> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(newState ? '连接成功' : '已断开连接'),
-        backgroundColor: newState ? const Color(0xFF4CAF50) : const Color(0xFFF44336),
+        backgroundColor: newState
+            ? const Color(0xFF4CAF50)
+            : const Color(0xFFF44336),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -714,11 +681,7 @@ class _HomeContentState extends State<HomeContent> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              color: color,
-              size: 24,
-            ),
+            Icon(icon, color: color, size: 24),
             const SizedBox(height: 8),
             Text(
               title,
@@ -734,266 +697,3 @@ class _HomeContentState extends State<HomeContent> {
     );
   }
 }
-
-// 统计页面组件
-class StatisticsPage extends StatefulWidget {
-  const StatisticsPage({super.key});
-
-  @override
-  State<StatisticsPage> createState() => _StatisticsPageState();
-}
-
-class _StatisticsPageState extends State<StatisticsPage> {
-  final List<_UsageRecord> _items = [];
-  final ScrollController _scrollController = ScrollController();
-  bool _isLoading = false;
-  bool _isRefreshing = false;
-  bool _hasMore = true;
-  int _page = 1;
-  final int _pageSize = 10;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadFirstPage();
-    _scrollController.addListener(_onScroll);
-  }
-
-  @override
-  void dispose() {
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (!_hasMore || _isLoading) return;
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      _loadMore();
-    }
-  }
-
-  Future<void> _loadFirstPage() async {
-    setState(() {
-      _isRefreshing = true;
-      _hasMore = true;
-      _page = 1;
-    });
-    final data = await _fetchPage(_page, _pageSize);
-    if (!mounted) return;
-    setState(() {
-      _items
-        ..clear()
-        ..addAll(data);
-      _hasMore = data.length == _pageSize;
-      _isRefreshing = false;
-    });
-  }
-
-  Future<void> _loadMore() async {
-    if (_isLoading || !_hasMore) return;
-    setState(() {
-      _isLoading = true;
-      _page += 1;
-    });
-    final data = await _fetchPage(_page, _pageSize);
-    if (!mounted) return;
-    setState(() {
-      _items.addAll(data);
-      _hasMore = data.length == _pageSize;
-      _isLoading = false;
-    });
-  }
-
-  // 模拟分页接口
-  Future<List<_UsageRecord>> _fetchPage(int page, int pageSize) async {
-    await Future.delayed(const Duration(milliseconds: 350));
-    final List<_UsageRecord> result = [];
-    final DateTime today = DateTime.now();
-    final int start = (page - 1) * pageSize;
-    for (int i = 0; i < pageSize; i++) {
-      final day = today.subtract(Duration(days: start + i));
-      // 构造一些看起来合理的数据
-      final double upMB = 5 + (start + i) * 0.3; // 例如 7.95 MB
-      final double downMB = 600 + ((start + i) * 4.2); // 例如 804.36 MB
-      final double ratio = 0.8; // 扣费倍率 0.80x
-      result.add(_UsageRecord(date: day, uploadMB: upMB, downloadMB: downMB, ratio: ratio));
-    }
-    return result;
-  }
-
-  String _formatDate(DateTime d) {
-    final y = d.year.toString().padLeft(4, '0');
-    final m = d.month.toString().padLeft(2, '0');
-    final day = d.day.toString().padLeft(2, '0');
-    return '$y-$m-$day';
-  }
-
-  String _formatMB(double mb) {
-    return '${mb.toStringAsFixed(2)} MB';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _loadFirstPage,
-      child: ListView.builder(
-        controller: _scrollController,
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
-        itemCount: _items.length + 1,
-        itemBuilder: (context, index) {
-          if (index == _items.length) {
-            if (_isRefreshing) {
-              return const SizedBox.shrink();
-            }
-            if (_isLoading) {
-              return _buildLoadingFooter();
-            }
-            if (!_hasMore) {
-              return _buildNoMoreFooter();
-            }
-            return const SizedBox.shrink();
-          }
-          final item = _items[index];
-          final String dateStr = _formatDate(item.date);
-          final double totalMB = (item.uploadMB + item.downloadMB) * item.ratio;
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      '记录时间',
-                      style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
-                    ),
-                    Text(
-                      dateStr,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF333333)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildMetric(label: '实际上行', value: _formatMB(item.uploadMB), color: const Color(0xFF007AFF)),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildMetric(label: '实际下行', value: _formatMB(item.downloadMB), color: const Color(0xFF4CAF50)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildMetric(label: '扣费倍率', value: '${item.ratio.toStringAsFixed(2)} x', color: const Color(0xFFFF9800)),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildMetric(label: '总计', value: _formatMB(totalMB), color: const Color(0xFF9C27B0)),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildMetric({required String label, required String value, required Color color}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE0E0E0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  value,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF333333)),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLoadingFooter() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: const [
-          SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          SizedBox(width: 12),
-          Text('加载中...')
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNoMoreFooter() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 16),
-      child: Center(
-      child: Text(
-          '没有更多了',
-          style: TextStyle(color: Color(0xFF999999)),
-        ),
-      ),
-    );
-  }
-}
-
-class _UsageRecord {
-  final DateTime date;
-  final double uploadMB;
-  final double downloadMB;
-  final double ratio;
-
-  _UsageRecord({required this.date, required this.uploadMB, required this.downloadMB, required this.ratio});
-} 
