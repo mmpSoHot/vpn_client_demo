@@ -917,42 +917,8 @@ class _HomeContentState extends State<HomeContent> {
                 ),
                 child: Column(
                   children: [
-                    // 连接状态
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          '连接状态',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF333333),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: widget.isProxyEnabled
-                                ? const Color(0xFF4CAF50)
-                                : const Color(0xFFF44336),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            _connectionStatus,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
+            
+                    
                     // 当前节点
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
