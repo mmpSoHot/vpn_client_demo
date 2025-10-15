@@ -81,6 +81,16 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
+# 安装 sing-box.exe 核心文件（参考 FlClash）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../sing-box.exe")
+  install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/../sing-box.exe" 
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+  message(STATUS "将安装 sing-box.exe 到输出目录")
+else()
+  message(WARNING "未找到 sing-box.exe，请确保它在项目根目录")
+endif()
+
 if(PLUGIN_BUNDLED_LIBRARIES)
   install(FILES "${PLUGIN_BUNDLED_LIBRARIES}"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
