@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:path/path.dart' as path;
 import '../models/node_model.dart';
+import '../services/proxy_mode_service.dart';
 import 'node_config_converter.dart';
 
 /// Sing-box 管理器
@@ -52,16 +53,21 @@ class SingboxManager {
     required NodeModel node,
     int mixedPort = 15808,
     bool enableTun = false,
+    bool enableStatsApi = true,
+    ProxyMode proxyMode = ProxyMode.bypassCN,
   }) async {
     try {
       print('📝 正在为节点生成配置: ${node.displayName}');
       print('   协议: ${node.protocol}');
+      print('   代理模式: ${proxyMode == ProxyMode.bypassCN ? "绕过大陆" : "全局代理"}');
       
       // 使用转换器生成配置
       final config = NodeConfigConverter.generateFullConfig(
         node: node,
         mixedPort: mixedPort,
         enableTun: enableTun,
+        enableStatsApi: enableStatsApi,
+        proxyMode: proxyMode,
       );
 
       final configFile = File(getConfigPath());

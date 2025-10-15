@@ -1,5 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
+import 'package:path/path.dart' as path;
 import '../models/node_model.dart';
+import '../services/proxy_mode_service.dart';
 
 /// 节点配置转换器
 /// 将不同协议的节点URL转换为 Sing-box 配置格式
@@ -72,6 +75,10 @@ class NodeConfigConverter {
       final path = config['path'] as String? ?? '';
       final sni = config['sni'] as String? ?? '';
       
+      print('📝 VMess 节点解析:');
+      print('   服务器: $server:$port');
+      print('   传输: $network, TLS: ${tls.isNotEmpty ? "是" : "否"}');
+      
       final outbound = {
         "type": "vmess",
         "tag": node.displayName,
@@ -127,13 +134,20 @@ class NodeConfigConverter {
       final port = uri.port;
       
       final params = uri.queryParameters;
-      // final encryption = params['encryption'] ?? 'none'; // VLESS encryption 通常为 none
+      // final encryption = params['encryption'] ?? 'none'; // VLESS 默认不加密
       final flow = params['flow'] ?? '';
       final security = params['security'] ?? '';
       final sni = params['sni'] ?? '';
       final type = params['type'] ?? 'tcp';
       final path = params['path'] ?? '';
       final host = params['host'] ?? '';
+      final mode = params['mode'] ?? '';
+      
+      print('📝 VLESS 节点解析:');
+      print('   服务器: $server:$port');
+      print('   Flow: ${flow.isNotEmpty ? flow : "无"}');
+      print('   Mode: ${mode.isNotEmpty ? mode : "无"}');
+      print('   传输: $type, TLS: ${security.isNotEmpty ? "是" : "否"}');
       
       final outbound = {
         "type": "vless",
@@ -143,18 +157,34 @@ class NodeConfigConverter {
         "uuid": uuid,
       };
 
-      // Flow
+      // Flow（VLESS 特有）
       if (flow.isNotEmpty) {
         outbound["flow"] = flow;
+      }
+      
+      // Packet encoding（VLESS 特有）
+      if (mode.isNotEmpty) {
+        if (mode == 'multi') {
+          outbound["packet_encoding"] = "xudp";
+        } else {
+          outbound["packet_encoding"] = mode;
+        }
       }
 
       // TLS 配置
       if (security == 'tls' || security == 'reality') {
-        outbound["tls"] = {
+        final tlsConfig = {
           "enabled": true,
           "server_name": sni.isNotEmpty ? sni : server,
           "insecure": false,
         };
+        
+        // 如果没有使用 flow，添加 record_fragment
+        if (flow.isEmpty) {
+          tlsConfig["record_fragment"] = false;
+        }
+        
+        outbound["tls"] = tlsConfig;
       }
 
       // 传输层配置
@@ -187,6 +217,8 @@ class NodeConfigConverter {
     required NodeModel node,
     int mixedPort = 15808,
     bool enableTun = false,
+    bool enableStatsApi = true,
+    ProxyMode proxyMode = ProxyMode.bypassCN,
   }) {
     final outbound = convertToOutbound(node);
     
@@ -194,61 +226,78 @@ class NodeConfigConverter {
       throw Exception('不支持的节点协议: ${node.protocol}');
     }
 
-    return {
+    // 根据代理模式生成配置
+    if (proxyMode == ProxyMode.bypassCN) {
+      return _generateBypassCNConfig(node, outbound, mixedPort, enableStatsApi);
+    } else {
+      return _generateGlobalConfig(node, outbound, mixedPort, enableStatsApi);
+    }
+  }
+
+  /// 生成绕过大陆模式配置
+  static Map<String, dynamic> _generateBypassCNConfig(
+    NodeModel node,
+    Map<String, dynamic> outbound,
+    int mixedPort,
+    bool enableStatsApi,
+  ) {
+    // 设置 tag 为 proxy
+    outbound["tag"] = "proxy";
+    
+    final config = {
       "log": {
-        "level": "info",
+        "level": "warn",
         "timestamp": true
       },
-      "dns": {
-        "servers": [
-          {
-            "tag": "google",
-            "server": "8.8.8.8",
-            "type": "udp"
-          },
-          {
-            "tag": "local",
-            "server": "223.5.5.5",
-            "type": "udp"
-          }
-        ],
-        "final": "google",
-        "strategy": "prefer_ipv4"
-      },
-      "inbounds": enableTun ? _getTunInbounds() : _getMixedInbounds(mixedPort),
+      "dns": _getBypassCNDnsConfig(node),
+      "inbounds": _getMixedInbounds(mixedPort),
       "outbounds": [
-        outbound, // 代理节点
+        outbound,
         {
           "type": "direct",
           "tag": "direct"
-        },
-        {
-          "type": "block",
-          "tag": "block"
         }
       ],
-      "route": {
-        "default_domain_resolver": {
-          "server": "google",
-          "strategy": "prefer_ipv4"
-        },
-        "rules": [
-          {
-            "action": "sniff"
-          },
-          {
-            "protocol": "dns",
-            "action": "hijack-dns"
-          },
-          {
-            "ip_is_private": true,
-            "outbound": "direct"
-          }
-        ],
-        "final": outbound["tag"],
-        "auto_detect_interface": true
-      }
+      "route": _getBypassCNRouteConfig(),
     };
+
+    // 添加 experimental 配置
+    config["experimental"] = _getExperimentalConfig(enableStatsApi);
+
+    return config;
+  }
+
+  /// 生成全局代理模式配置
+  static Map<String, dynamic> _generateGlobalConfig(
+    NodeModel node,
+    Map<String, dynamic> outbound,
+    int mixedPort,
+    bool enableStatsApi,
+  ) {
+    // 设置 tag 为 proxy
+    outbound["tag"] = "proxy";
+    
+    final config = {
+      "log": {
+        "level": "warn",
+        "timestamp": true
+      },
+      "dns": _getGlobalDnsConfig(node),
+      "inbounds": _getMixedInbounds(mixedPort),
+      "outbounds": [
+        outbound,
+        {
+          "type": "direct",
+          "tag": "direct"
+        }
+      ],
+      "route": _getGlobalRouteConfig(),
+    };
+
+    // 添加 experimental 配置
+    config["experimental"] = _getExperimentalConfig(enableStatsApi);
+
+    return config;
   }
 
   /// 获取 Mixed 入站配置
@@ -278,6 +327,295 @@ class NodeConfigConverter {
         "sniff_override_destination": false
       }
     ];
+  }
+
+  /// 获取绕过大陆的 DNS 配置
+  static Map<String, dynamic> _getBypassCNDnsConfig(NodeModel node) {
+    final server = _extractServerFromNode(node);
+    
+    return {
+      "servers": [
+        {
+          "server": "223.5.5.5",
+          "type": "udp",
+          "tag": "final_resolver"
+        },
+        {
+          "server": "8.8.8.8",
+          "type": "udp",
+          "tag": "remote_dns",
+          "detour": "proxy"
+        },
+        {
+          "server": "223.5.5.5",
+          "type": "udp",
+          "tag": "direct_dns"
+        },
+        {
+          "server": "223.5.5.5",
+          "type": "udp",
+          "tag": "outbound_resolver"
+        },
+      ],
+      "rules": [
+        {
+          "server": "outbound_resolver",
+          "domain": [server]
+        },
+        {
+          "server": "direct_dns",
+          "rule_set": ["geosite-private"]
+        },
+        {
+          "server": "direct_dns",
+          "rule_set": ["geosite-cn"]
+        }
+      ],
+      "final": "remote_dns",
+      "independent_cache": true
+    };
+  }
+
+  /// 获取全局代理的 DNS 配置
+  static Map<String, dynamic> _getGlobalDnsConfig(NodeModel node) {
+    final server = _extractServerFromNode(node);
+    
+    return {
+      "servers": [
+        {
+          "server": "223.5.5.5",
+          "type": "udp",
+          "tag": "final_resolver"
+        },
+        {
+          "server": "8.8.8.8",
+          "type": "udp",
+          "tag": "remote_dns",
+          "detour": "proxy"
+        },
+        {
+          "server": "223.5.5.5",
+          "type": "udp",
+          "tag": "direct_dns"
+        },
+        {
+          "server": "223.5.5.5",
+          "type": "udp",
+          "tag": "outbound_resolver"
+        },
+      ],
+      "rules": [
+        {
+          "server": "outbound_resolver",
+          "domain": [server]
+        },
+        {
+          "server": "direct_dns",
+          "rule_set": ["geosite-private"]
+        }
+      ],
+      "final": "remote_dns",
+      "independent_cache": true
+    };
+  }
+  /// 获取绕过大陆的路由配置
+  static Map<String, dynamic> _getBypassCNRouteConfig() {
+    // 获取 geosite 规则文件路径
+    final String geoRuleBasePath = _getGeoRuleBasePath();
+    
+    return {
+      "default_domain_resolver": {
+        "server": "outbound_resolver",
+        "strategy": ""
+      },
+      "rules": [
+        {"action": "sniff"},
+        {"protocol": ["dns"], "action": "hijack-dns"},
+        {"domain": [], "action": "resolve"},
+        {"outbound": "direct", "clash_mode": "Direct"},
+        {"outbound": "proxy", "clash_mode": "Global"},
+        {
+          "outbound": "proxy",
+          "domain": ["googleapis.cn", "gstatic.com"],
+          "domain_suffix": [".googleapis.cn", ".gstatic.com"]
+        },
+        {"network": ["udp"], "port": [443], "action": "reject"},
+        {"outbound": "direct", "ip_is_private": true},
+        {"outbound": "direct", "rule_set": ["geosite-private"]},
+        {
+          "outbound": "direct",
+          "ip_cidr": [
+            "223.5.5.5", "223.6.6.6", "2400:3200::1", "2400:3200:baba::1",
+            "119.29.29.29", "1.12.12.12", "120.53.53.53", "2402:4e00::", "2402:4e00:1::",
+            "180.76.76.76", "2400:da00::6666", "114.114.114.114", "114.114.115.115",
+            "114.114.114.119", "114.114.115.119", "114.114.114.110", "114.114.115.110",
+            "180.184.1.1", "180.184.2.2", "101.226.4.6", "218.30.118.6",
+            "123.125.81.6", "140.207.198.6", "1.2.4.8", "210.2.4.8",
+            "52.80.66.66", "117.50.22.22", "2400:7fc0:849e:200::4", "2404:c2c0:85d8:901::4",
+            "117.50.10.10", "52.80.52.52", "2400:7fc0:849e:200::8", "2404:c2c0:85d8:901::8",
+            "117.50.60.30", "52.80.60.30"
+          ]
+        },
+        {
+          "outbound": "direct",
+          "domain": ["alidns.com", "doh.pub", "dot.pub", "360.cn", "onedns.net"],
+          "domain_suffix": [".alidns.com", ".doh.pub", ".dot.pub", ".360.cn", ".onedns.net"]
+        },
+        {"outbound": "direct", "rule_set": ["geoip-cn"]},
+        {"outbound": "direct", "rule_set": ["geosite-cn"]}
+      ],
+      "rule_set": [
+        {
+          "tag": "geosite-private",
+          "type": "local",
+          "format": "binary",
+          "path": "$geoRuleBasePath/geosite-private.srs"
+        },
+        {
+          "tag": "geosite-cn",
+          "type": "local",
+          "format": "binary",
+          "path": "$geoRuleBasePath/geosite-cn.srs"
+        },
+        {
+          "tag": "geoip-cn",
+          "type": "local",
+          "format": "binary",
+          "path": "$geoRuleBasePath/geoip-cn.srs"
+        }
+      ],
+      "final": "proxy"
+    };
+  }
+
+  /// 获取全局代理的路由配置
+  static Map<String, dynamic> _getGlobalRouteConfig() {
+    // 获取 geosite 规则文件路径
+    final String geoRuleBasePath = _getGeoRuleBasePath();
+    
+    return {
+      "default_domain_resolver": {
+        "server": "outbound_resolver",
+        "strategy": ""
+      },
+      "rules": [
+        {"action": "sniff"},
+        {"protocol": ["dns"], "action": "hijack-dns"},
+        {"domain": [], "action": "resolve"},
+        {"outbound": "direct", "clash_mode": "Direct"},
+        {"outbound": "proxy", "clash_mode": "Global"},
+        {"network": ["udp"], "port": [443], "action": "reject"},
+        {"outbound": "direct", "ip_is_private": true},
+        {"outbound": "direct", "rule_set": ["geosite-private"]},
+        {"outbound": "proxy", "port_range": ["0:65535"]}
+      ],
+      "rule_set": [
+        {
+          "tag": "geosite-private",
+          "type": "local",
+          "format": "binary",
+          "path": "$geoRuleBasePath/geosite-private.srs"
+        }
+      ],
+      "final": "proxy"
+    };
+  }
+
+  /// 获取 experimental 配置
+  static Map<String, dynamic> _getExperimentalConfig(bool enableStatsApi) {
+    final config = {
+      "cache_file": {
+        "enabled": true,
+        "path": "${_getCacheDbPath()}",
+        "store_fakeip": false
+      }
+    };
+    
+    if (enableStatsApi) {
+      config["clash_api"] = {
+        "external_controller": "127.0.0.1:9090",
+        "external_ui": "",
+        "secret": ""
+      };
+    }
+    
+    return config;
+  }
+
+  /// 从节点提取服务器地址
+  static String _extractServerFromNode(NodeModel node) {
+    try {
+      final uri = Uri.parse(node.rawConfig);
+      return uri.host;
+    } catch (e) {
+      print('提取服务器地址失败: $e');
+      return "unknown.server.com";
+    }
+  }
+
+  /// 获取 geo 规则文件基础路径
+  static String _getGeoRuleBasePath() {
+    // 使用项目中的 srss 目录
+    // 开发环境：从项目根目录
+    final devPath = path.join(Directory.current.path, 'srss');
+    if (Directory(devPath).existsSync()) {
+      return devPath;
+    }
+
+    // 发布环境：从 exe 同级目录
+    final exeDir = path.dirname(Platform.resolvedExecutable);
+    final bundlePath = path.join(exeDir, 'data', 'flutter_assets', 'srss');
+    if (Directory(bundlePath).existsSync()) {
+      return bundlePath;
+    }
+
+    // 备用：从当前目录
+    return path.join(Directory.current.path, 'srss');
+  }
+
+  /// 获取缓存数据库路径
+  static String _getCacheDbPath() {
+    String cachePath;
+    
+    if (Platform.isWindows) {
+      final homeDir = Platform.environment['USERPROFILE'] ?? 'C:\\Users\\Default';
+      final cacheDir = path.join(homeDir, '.vpn_client_demo');
+      cachePath = path.join(cacheDir, 'cache.db');
+      
+      // 确保目录存在
+      final dir = Directory(cacheDir);
+      if (!dir.existsSync()) {
+        try {
+          dir.createSync(recursive: true);
+          print('✅ 创建缓存目录: $cacheDir');
+        } catch (e) {
+          print('⚠️ 创建缓存目录失败: $e');
+        }
+      }
+    } else if (Platform.isMacOS || Platform.isLinux) {
+      final homeDir = Platform.environment['HOME'] ?? '/tmp';
+      final cacheDir = path.join(homeDir, '.vpn_client_demo');
+      cachePath = path.join(cacheDir, 'cache.db');
+      
+      // 确保目录存在
+      final dir = Directory(cacheDir);
+      if (!dir.existsSync()) {
+        try {
+          dir.createSync(recursive: true);
+          print('✅ 创建缓存目录: $cacheDir');
+        } catch (e) {
+          print('⚠️ 创建缓存目录失败: $e');
+        }
+      }
+    } else if (Platform.isAndroid) {
+      cachePath = '/data/data/com.example.vpn_client_demo/files/cache.db';
+    } else if (Platform.isIOS) {
+      cachePath = '/var/mobile/Containers/Data/Application/vpn_client_demo/Documents/cache.db';
+    } else {
+      cachePath = './cache.db';
+    }
+    
+    return cachePath;
   }
 }
 

@@ -20,12 +20,12 @@ class NodeSelectionPage extends StatefulWidget {
   State<NodeSelectionPage> createState() => _NodeSelectionPageState();
 
   /// 显示节点选择BottomSheet的静态方法
-  static Future<void> show(
+  static Future<NodeModel?> show(
     BuildContext context, {
     required String selectedNode,
     required Function(String) onNodeSelected,
   }) async {
-    await showModalBottomSheet(
+    return await showModalBottomSheet<NodeModel>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -44,6 +44,37 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
   String? _errorMessage;
   bool _isTesting = false; // 是否正在测试延迟
   Map<String, int> _latencyResults = {}; // 延迟测试结果
+  
+  /// 在后台切换节点（不阻塞UI）
+  void _switchNodeInBackground(NodeModel nodeModel, String nodeName) {
+    Future(() async {
+      try {
+        print('🔄 后台切换节点: $nodeName');
+        
+        // 生成配置
+        await SingboxManager.generateConfigFromNode(
+          node: nodeModel,
+        );
+        
+        // 如果已经在运行，先停止
+        if (SingboxManager.isRunning()) {
+          await SingboxManager.stop();
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+        
+        // 启动 sing-box
+        final started = await SingboxManager.start();
+        
+        if (started) {
+          print('✅ 节点切换成功: $nodeName');
+        } else {
+          print('❌ 节点切换失败: sing-box 启动失败');
+        }
+      } catch (e) {
+        print('❌ 后台切换节点失败: $e');
+      }
+    });
+  }
 
   List<Map<String, dynamic>> _nodes = [
     {
@@ -703,86 +734,32 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
                         ],
                       ],
                     ),
-                    onTap: () async {
+                    onTap: () {
                       // 获取节点对象
                       final NodeModel? nodeModel = node['nodeModel'];
                       
+                      // 立即关闭 BottomSheet 并返回节点对象
+                      Navigator.pop(context, nodeModel);
+                      
+                      // 通知父组件节点已选择
+                      if (widget.onNodeSelected != null) {
+                        widget.onNodeSelected!(node['name']);
+                      }
+                      
                       if (nodeModel != null) {
-                        // 如果有节点对象，生成配置并启动
-                        try {
-                          // 显示加载提示
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('正在配置节点：${node['name']}...'),
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-                          
-                          // 生成配置
-                          await SingboxManager.generateConfigFromNode(
-                            node: nodeModel,
-                          );
-                          
-                          // 如果已经在运行，先停止
-                          if (SingboxManager.isRunning()) {
-                            await SingboxManager.stop();
-                            await Future.delayed(const Duration(milliseconds: 500));
-                          }
-                          
-                          // 启动 sing-box
-                          final started = await SingboxManager.start();
-                          
-                          if (started) {
-                            // 通知父组件节点已选择
-                            if (widget.onNodeSelected != null) {
-                              widget.onNodeSelected!(node['name']);
-                            }
-                            
-                            // 显示成功提示
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('✅ 已连接到：${node['name']}'),
-                                  backgroundColor: const Color(0xFF4CAF50),
-                                  duration: const Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                            
-                            // 关闭BottomSheet
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                            }
-                          } else {
-                            // 启动失败
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('❌ 启动失败，请查看日志'),
-                                  backgroundColor: Color(0xFFF44336),
-                                  duration: Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                          }
-                        } catch (e) {
-                          print('❌ 配置节点失败: $e');
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('❌ 配置失败: $e'),
-                                backgroundColor: const Color(0xFFF44336),
-                                duration: const Duration(seconds: 3),
-                              ),
-                            );
-                          }
-                        }
-                      } else {
-                        // 自动选择节点，只通知父组件
-                        if (widget.onNodeSelected != null) {
-                          widget.onNodeSelected!(node['name']);
-                        }
+                        // 显示切换提示
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('正在切换到：${node['name']}...'),
+                            backgroundColor: const Color(0xFF2196F3),
+                            duration: const Duration(seconds: 1),
+                          ),
+                        );
                         
+                        // 在后台异步执行重启操作，不阻塞UI
+                        _switchNodeInBackground(nodeModel, node['name']);
+                      } else {
+                        // 自动选择节点
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text('已选择：${node['name']}'),
@@ -790,8 +767,6 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
                             duration: const Duration(milliseconds: 800),
                           ),
                         );
-                        
-                        Navigator.pop(context);
                       }
                     },
                   ),

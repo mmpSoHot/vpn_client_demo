@@ -75,15 +75,16 @@ class SystemProxyHelper {
           return false;
         }
 
-        // 设置 ProxyOverride = "<local>" (本地地址不走代理)
-        final overrideValue = '<local>'.toNativeUtf16();
+        // 设置 ProxyOverride (跳过代理的地址列表，参考 v2rayN)
+        const bypassList = 'localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*';
+        final overrideValue = bypassList.toNativeUtf16();
         result = RegSetValueEx(
           hKey.value,
           'ProxyOverride'.toNativeUtf16(),
           0,
           REG_VALUE_TYPE.REG_SZ,
           overrideValue.cast(),
-          ('<local>'.length + 1) * 2,
+          (bypassList.length + 1) * 2,
         );
         calloc.free(overrideValue);
 

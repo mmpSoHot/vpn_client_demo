@@ -8,6 +8,7 @@ import '../services/user_service.dart';
 import '../services/proxy_mode_service.dart';
 import '../services/api_service.dart';
 import '../services/node_storage_service.dart';
+import '../services/websocket_speed_service.dart';
 import '../models/subscribe_model.dart';
 import '../models/node_model.dart';
 import '../utils/auth_helper.dart';
@@ -310,6 +311,7 @@ class _HomeContentState extends State<HomeContent> {
   Timer? _statusChecker; // 状态检查定时器
   NodeModel? _selectedNodeModel; // 当前选中的节点对象
   ProxyMode _proxyMode = ProxyMode.bypassCN; // 出站模式（本地状态）
+  final WebSocketSpeedService _speedService = WebSocketSpeedService(); // 网速监控服务
 
   @override
   void initState() {
@@ -324,6 +326,9 @@ class _HomeContentState extends State<HomeContent> {
     _startStatusChecker();
     // 加载出站模式
     _loadProxyModeLocal();
+    // 监听网速变化
+    _speedService.uploadSpeedNotifier.addListener(_onSpeedUpdate);
+    _speedService.downloadSpeedNotifier.addListener(_onSpeedUpdate);
   }
 
   Future<void> _loadProxyModeLocal() async {
@@ -374,11 +379,21 @@ class _HomeContentState extends State<HomeContent> {
     _userService.removeListener(_onUserServiceChanged);
     // 停止状态检查
     _statusChecker?.cancel();
+    // 移除网速监听器
+    _speedService.uploadSpeedNotifier.removeListener(_onSpeedUpdate);
+    _speedService.downloadSpeedNotifier.removeListener(_onSpeedUpdate);
     super.dispose();
   }
 
   void _onUserServiceChanged() {
     // 当用户服务状态改变时，刷新页面
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _onSpeedUpdate() {
+    // 网速更新时刷新UI
     if (mounted) {
       setState(() {});
     }
@@ -442,30 +457,15 @@ class _HomeContentState extends State<HomeContent> {
           _selectedNodeModel = savedNode;
           print('📌 使用保存的节点: ${savedNode.name}');
         } else {
-          // 如果没有保存的节点，使用示例节点
-          final subscribe = _subscribeInfo;
-          if (subscribe == null) {
-            if (mounted) {
-              _showError('获取订阅信息失败');
-              setState(() {
-                _isConnecting = false;
-                _connectionStatus = '未连接';
-              });
-            }
-            return;
+          // 如果没有保存的节点，提示用户先选择节点
+          if (mounted) {
+            _showError('请先选择节点');
+            setState(() {
+              _isConnecting = false;
+              _connectionStatus = '未连接';
+            });
           }
-
-          // 使用示例节点（后续需要实现真实的节点获取逻辑）
-          _selectedNodeModel = NodeModel(
-            name: widget.selectedNode,
-            protocol: 'Hysteria2',
-            location: '香港',
-            rawConfig:
-                'hysteria2://${subscribe.uuid}@example.com:443?sni=www.bing.com&insecure=1#${widget.selectedNode}',
-          );
-          
-          // 保存节点以供下次使用
-          await NodeStorageService.saveSelectedNode(_selectedNodeModel!);
+          return;
         }
       }
 
@@ -473,6 +473,7 @@ class _HomeContentState extends State<HomeContent> {
       await SingboxManager.generateConfigFromNode(
         node: _selectedNodeModel!,
         mixedPort: 15808,
+        proxyMode: _proxyMode,
       );
 
       // Step 3: 启动 sing-box
@@ -523,6 +524,14 @@ class _HomeContentState extends State<HomeContent> {
         });
         widget.onConnectionStateChanged(true);
         _showSuccess('VPN 连接成功');
+        
+        // 延迟启动 WebSocket 监控，确保 sing-box 完全启动并启用 API
+        Future.delayed(const Duration(seconds: 5), () {
+          if (mounted && widget.isProxyEnabled) {
+            print('🚀 启动网速监控服务...');
+            _speedService.startMonitoring();
+          }
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -562,6 +571,9 @@ class _HomeContentState extends State<HomeContent> {
         });
         widget.onConnectionStateChanged(false);
         _showSuccess('VPN 已断开');
+        
+        // 停止网速监控
+        _speedService.stopMonitoring();
       }
     } catch (e) {
       if (mounted) {
@@ -570,6 +582,38 @@ class _HomeContentState extends State<HomeContent> {
           _isConnecting = false;
           _connectionStatus = '未连接';
         });
+      }
+    }
+  }
+
+  /// 应用代理模式更改（VPN 运行时）
+  Future<void> _applyProxyModeChange() async {
+    try {
+      print('🔄 正在应用代理模式更改...');
+      
+      // 1. 重新生成配置
+      await SingboxManager.generateConfigFromNode(
+        node: _selectedNodeModel!,
+        mixedPort: 15808,
+        proxyMode: _proxyMode,
+      );
+      
+      // 2. 停止 sing-box
+      await SingboxManager.stop();
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // 3. 重新启动 sing-box
+      bool started = await SingboxManager.start();
+      
+      if (!started) {
+        throw Exception('重启 sing-box 失败');
+      }
+      
+      print('✅ 代理模式更改已应用');
+    } catch (e) {
+      print('❌ 应用代理模式失败: $e');
+      if (mounted) {
+        _showError('切换模式失败: $e');
       }
     }
   }
@@ -670,10 +714,17 @@ class _HomeContentState extends State<HomeContent> {
                               if (v == null) return;
                               setState(() => _proxyMode = v);
                               await ProxyModeService.setMode(v);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('已切换为: 智能')),
-                              );
-                              // TODO: 应用到运行中的 sing-box 配置
+                              
+                              // 如果 VPN 正在运行，重新生成配置并重启 sing-box
+                              if (widget.isProxyEnabled && _selectedNodeModel != null) {
+                                await _applyProxyModeChange();
+                              }
+                              
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('已切换为: 绕过大陆')),
+                                );
+                              }
                             },
                           ),                       
                           RadioListTile<ProxyMode>(
@@ -693,10 +744,17 @@ class _HomeContentState extends State<HomeContent> {
                               if (v == null) return;
                               setState(() => _proxyMode = v);
                               await ProxyModeService.setMode(v);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('已切换为: 全局')),
-                              );
-                              // TODO: 应用到运行中的 sing-box 配置
+                              
+                              // 如果 VPN 正在运行，重新生成配置并重启 sing-box
+                              if (widget.isProxyEnabled && _selectedNodeModel != null) {
+                                await _applyProxyModeChange();
+                              }
+                              
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('已切换为: 全局代理')),
+                                );
+                              }
                             },
                           ),
                           const SizedBox(height: 2),
@@ -797,24 +855,42 @@ class _HomeContentState extends State<HomeContent> {
                           ),
                           const SizedBox(height: 12),
                           // 实时速度（上传/下载），单位靠右
-                          Row(
-                            children: const [
-                              Icon(Icons.arrow_upward, size: 14, color: Color(0xFFC8CCD2)),
-                              SizedBox(width: 8),
-                              Text('111.35', style: TextStyle(fontSize: 14, color: Color(0xFF333333))),
-                              Spacer(),
-                              Text('KB', style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF))),
-                            ],
+                          ValueListenableBuilder<String>(
+                            valueListenable: _speedService.uploadSpeedNotifier,
+                            builder: (context, uploadSpeed, child) {
+                              return Row(
+                                children: [
+                                  const Icon(Icons.arrow_upward, size: 14, color: Color(0xFFC8CCD2)),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      uploadSpeed.replaceAll('/s', ''),
+                                      style: const TextStyle(fontSize: 14, color: Color(0xFF333333)),
+                                    ),
+                                  ),
+                                  const Text('/s', style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF))),
+                                ],
+                              );
+                            },
                           ),
                           const SizedBox(height: 8),
-                          Row(
-                            children: const [
-                              Icon(Icons.arrow_downward, size: 14, color: Color(0xFF8FA6D9)),
-                              SizedBox(width: 8),
-                              Text('988.29', style: TextStyle(fontSize: 14, color: Color(0xFF333333))),
-                              Spacer(),
-                              Text('KB', style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF))),
-                            ],
+                          ValueListenableBuilder<String>(
+                            valueListenable: _speedService.downloadSpeedNotifier,
+                            builder: (context, downloadSpeed, child) {
+                              return Row(
+                                children: [
+                                  const Icon(Icons.arrow_downward, size: 14, color: Color(0xFF8FA6D9)),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      downloadSpeed.replaceAll('/s', ''),
+                                      style: const TextStyle(fontSize: 14, color: Color(0xFF333333)),
+                                    ),
+                                  ),
+                                  const Text('/s', style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF))),
+                                ],
+                              );
+                            },
                           ),
                         ],
                       ),
@@ -890,13 +966,21 @@ class _HomeContentState extends State<HomeContent> {
                           ),
                         ),
                         GestureDetector(
-                          onTap: () {
+                          onTap: () async {
                             // 使用BottomSheet显示节点选择
-                            NodeSelectionPage.show(
+                            final selectedNodeModel = await NodeSelectionPage.show(
                               context,
                               selectedNode: widget.selectedNode,
                               onNodeSelected: widget.onNodeChanged,
                             );
+                            
+                            // 如果用户选择了节点，更新当前选中的节点对象
+                            if (selectedNodeModel != null) {
+                              setState(() {
+                                _selectedNodeModel = selectedNodeModel;
+                              });
+                              print('✅ 已选择节点: ${selectedNodeModel.displayName}');
+                            }
                           },
                           child: Row(
                             children: [
