@@ -56,12 +56,30 @@ class AndroidVpnHelper {
         node: node,
         mixedPort: 15808,  // Android 可能不使用，但保留
         enableTun: true,   // Android 必须使用 TUN
-        enableStatsApi: true,
+        enableStatsApi: false,  // Android 暂时禁用 stats API
         proxyMode: proxyMode,
       );
       
       // 将配置转换为 JSON 字符串
       final configJson = jsonEncode(config);
+      
+      // 调试: 打印完整配置
+      print('📝 生成的配置:');
+      print('   DNS: ${config['dns']}');
+      print('   Route: ${config['route']}');
+      print('   Outbounds: ${config['outbounds']}');
+      print('   Inbounds: ${config['inbounds']}');
+      print('   Log: ${config['log']}');
+      if (config.containsKey('experimental')) {
+        print('   experimental: ${config['experimental']}');
+      }
+      
+      // 打印完整 JSON (格式化)
+      print('📄 完整配置 JSON:');
+      print('=' * 60);
+      final encoder = JsonEncoder.withIndent('  ');
+      print(encoder.convert(config));
+      print('=' * 60);
       
       // 调用 Android 端启动 VPN
       final result = await _channel.invokeMethod('startVpn', {

@@ -439,22 +439,25 @@ class _HomeContentState extends State<HomeContent> {
       // 如果正在连接中，跳过状态检查
       if (_isConnecting) return;
 
-      // 检查 sing-box 是否运行
-      bool singboxRunning = SingboxManager.isRunning();
-
-      // 检查系统代理是否设置
-      bool proxySet = await SystemProxyHelper.isProxySetTo('127.0.0.1', 15808);
-
-      // 更新连接状态
-      bool isConnected = singboxRunning && proxySet;
-
-      if (mounted && widget.isProxyEnabled != isConnected) {
+      bool isConnected = false;
+      
+      if (Platform.isAndroid) {
+        // Android: 检查 VPN 服务状态
+        isConnected = await AndroidVpnHelper.isRunning();
+      } else if (Platform.isWindows) {
+        // Windows: 检查 sing-box 进程和系统代理
+        bool singboxRunning = SingboxManager.isRunning();
+        bool proxySet = await SystemProxyHelper.isProxySetTo('127.0.0.1', 15808);
+        isConnected = singboxRunning && proxySet;
+        
         // 如果 sing-box 意外停止，清除系统代理
         if (!singboxRunning && proxySet) {
           print('⚠️ 检测到 sing-box 异常停止，清除系统代理');
           await SystemProxyHelper.clearProxy();
         }
+      }
 
+      if (mounted && widget.isProxyEnabled != isConnected) {
         // 更新状态
         setState(() {
           _connectionStatus = isConnected ? '已连接' : '未连接';

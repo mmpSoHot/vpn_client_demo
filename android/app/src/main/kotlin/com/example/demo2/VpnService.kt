@@ -34,12 +34,18 @@ class VpnService : AndroidVpnService() {
         
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "vpn_service_channel"
+        
+        // 服务运行状态
+        @Volatile
+        var isServiceRunning = false
+            private set
     }
     
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "VpnService onCreate")
         createNotificationChannel()
+        isServiceRunning = true
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -67,6 +73,17 @@ class VpnService : AndroidVpnService() {
         try {
             Log.d(TAG, "启动 VPN...")
             Log.d(TAG, "配置长度: ${configJson.length} 字符")
+            
+            // 预先创建 cache.db 文件
+            try {
+                val cacheFile = java.io.File(cacheDir, "cache.db")
+                if (!cacheFile.exists()) {
+                    cacheFile.createNewFile()
+                    Log.d(TAG, "创建 cache.db: ${cacheFile.absolutePath}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "创建 cache.db 失败: $e")
+            }
             
             // 显示前台服务通知
             startForeground(NOTIFICATION_ID, createNotification())
@@ -111,6 +128,7 @@ class VpnService : AndroidVpnService() {
     
     override fun onDestroy() {
         Log.d(TAG, "VpnService onDestroy")
+        isServiceRunning = false
         stopVpn()
         super.onDestroy()
     }
