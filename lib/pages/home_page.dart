@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';  // 用于平台判断
 import 'package:flutter/material.dart';
 import 'node_selection_page.dart';
 import 'vip_recharge_page.dart';
@@ -14,6 +15,7 @@ import '../models/node_model.dart';
 import '../utils/auth_helper.dart';
 import '../utils/singbox_manager.dart';
 import '../utils/system_proxy_helper.dart';
+import '../utils/android_vpn_helper.dart';  // Android VPN 支持
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -326,6 +328,8 @@ class _HomeContentState extends State<HomeContent> {
     _startStatusChecker();
     // 加载出站模式
     _loadProxyModeLocal();
+    // 加载上次选择的节点对象
+    _loadSavedNode();
     // 监听网速变化
     _speedService.uploadSpeedNotifier.addListener(_onSpeedUpdate);
     _speedService.downloadSpeedNotifier.addListener(_onSpeedUpdate);
@@ -334,6 +338,34 @@ class _HomeContentState extends State<HomeContent> {
   Future<void> _loadProxyModeLocal() async {
     _proxyMode = await ProxyModeService.getMode();
     if (mounted) setState(() {});
+  }
+  
+  /// 加载保存的节点对象
+  Future<void> _loadSavedNode() async {
+    try {
+      print('🔍 [HomeContent] 开始加载保存的节点对象...');
+      final savedNode = await NodeStorageService.getSelectedNode();
+      
+      if (savedNode == null) {
+        print('⚠️ [HomeContent] 没有找到保存的节点对象');
+        return;
+      }
+      
+      if (savedNode.rawConfig.isEmpty) {
+        print('⚠️ [HomeContent] 节点配置为空: ${savedNode.name}');
+        return;
+      }
+      
+      setState(() {
+        _selectedNodeModel = savedNode;
+      });
+      print('✅ [HomeContent] 恢复上次选择的节点对象: ${savedNode.displayName}');
+      print('   协议: ${savedNode.protocol}');
+      print('   配置长度: ${savedNode.rawConfig.length}');
+    } catch (e) {
+      print('❌ [HomeContent] 加载保存的节点失败: $e');
+      print('   错误堆栈: ${StackTrace.current}');
+    }
   }
 
   /// 加载订阅信息
@@ -448,16 +480,26 @@ class _HomeContentState extends State<HomeContent> {
 
     try {
       // Step 1: 获取节点
+      print('🔍 [连接] 检查节点: _selectedNodeModel = ${_selectedNodeModel?.displayName ?? "null"}');
+      
       if (_selectedNodeModel == null) {
+        print('⚠️ [连接] 内存中没有节点对象，尝试从存储加载...');
+        
         // 尝试从存储中加载上次选择的节点
         final savedNode = await NodeStorageService.getSelectedNode();
         
         if (savedNode != null && savedNode.rawConfig.isNotEmpty) {
           // 使用保存的节点
           _selectedNodeModel = savedNode;
-          print('📌 使用保存的节点: ${savedNode.name}');
+          print('✅ [连接] 从存储加载节点成功: ${savedNode.displayName}');
         } else {
           // 如果没有保存的节点，提示用户先选择节点
+          print('❌ [连接] 存储中也没有节点，savedNode = $savedNode');
+          if (savedNode != null) {
+            print('   节点名称: ${savedNode.name}');
+            print('   rawConfig 是否为空: ${savedNode.rawConfig.isEmpty}');
+          }
+          
           if (mounted) {
             _showError('请先选择节点');
             setState(() {
@@ -467,47 +509,106 @@ class _HomeContentState extends State<HomeContent> {
           }
           return;
         }
+      } else {
+        print('✅ [连接] 使用内存中的节点: ${_selectedNodeModel!.displayName}');
       }
 
-      // Step 2: 生成 sing-box 配置
-      await SingboxManager.generateConfigFromNode(
-        node: _selectedNodeModel!,
-        mixedPort: 15808,
-        proxyMode: _proxyMode,
-      );
-
-      // Step 3: 启动 sing-box
-      bool started = await SingboxManager.start();
-
-      if (!started) {
-        if (mounted) {
-          _showError('sing-box 启动失败，可能是端口被占用，正在重试...');
-          
-          // 等待一下再重试
-          await Future.delayed(const Duration(milliseconds: 1000));
-          
-          // 重试一次
-          started = await SingboxManager.start();
-          
-          if (!started) {
-            _showError('sing-box 启动失败，请检查是否有其他代理软件占用端口');
+      // Step 2: 根据平台启动 VPN
+      bool started = false;
+      
+      if (Platform.isWindows) {
+        // Windows 平台：使用 sing-box.exe + 系统代理
+        await SingboxManager.generateConfigFromNode(
+          node: _selectedNodeModel!,
+          mixedPort: 15808,
+          proxyMode: _proxyMode,
+        );
+        
+        started = await SingboxManager.start();
+        
+        if (!started) {
+          if (mounted) {
+            _showError('sing-box 启动失败，可能是端口被占用，正在重试...');
+            
+            // 等待一下再重试
+            await Future.delayed(const Duration(milliseconds: 1000));
+            
+            // 重试一次
+            started = await SingboxManager.start();
+            
+            if (!started) {
+              _showError('sing-box 启动失败，请检查是否有其他代理软件占用端口');
+              setState(() {
+                _isConnecting = false;
+                _connectionStatus = '未连接';
+              });
+              return;
+            }
+          }
+        }
+        
+        // Step 3: 设置系统代理
+        bool proxySet = await SystemProxyHelper.setProxy('127.0.0.1', 15808);
+        
+        if (!proxySet) {
+          // 代理设置失败，停止 sing-box
+          await SingboxManager.stop();
+          if (mounted) {
+            _showError('系统代理设置失败');
             setState(() {
               _isConnecting = false;
               _connectionStatus = '未连接';
             });
+          }
+          return;
+        }
+        
+        started = true;
+      } else if (Platform.isAndroid) {
+        // Android 平台：使用 VPN 服务 + TUN 接口
+        print('🤖 Android 平台，使用 VPN 服务');
+        
+        // Step 1: 检查 VPN 权限
+        bool hasPermission = await AndroidVpnHelper.checkPermission();
+        if (!hasPermission) {
+          if (mounted) {
+            _showError('正在请求 VPN 权限...');
+          }
+          
+          hasPermission = await AndroidVpnHelper.requestPermission();
+          
+          if (!hasPermission) {
+            if (mounted) {
+              _showError('需要 VPN 权限才能使用，请在系统设置中授予权限');
+              setState(() {
+                _isConnecting = false;
+                _connectionStatus = '未连接';
+              });
+            }
             return;
           }
         }
-      }
-
-      // Step 4: 设置系统代理
-      bool proxySet = await SystemProxyHelper.setProxy('127.0.0.1', 15808);
-
-      if (!proxySet) {
-        // 代理设置失败，停止 sing-box
-        await SingboxManager.stop();
+        
+        // Step 2: 启动 VPN 服务
+        started = await AndroidVpnHelper.startVpn(
+          node: _selectedNodeModel!,
+          proxyMode: _proxyMode,
+        );
+        
+        if (!started) {
+          if (mounted) {
+            _showError('Android VPN 启动失败，请检查 libbox.aar 是否已配置');
+            setState(() {
+              _isConnecting = false;
+              _connectionStatus = '未连接';
+            });
+          }
+          return;
+        }
+      } else {
+        // 其他平台暂不支持
         if (mounted) {
-          _showError('系统代理设置失败');
+          _showError('当前平台暂不支持，仅支持 Windows 和 Android');
           setState(() {
             _isConnecting = false;
             _connectionStatus = '未连接';
@@ -516,7 +617,19 @@ class _HomeContentState extends State<HomeContent> {
         return;
       }
 
-      // 连接成功
+      // 连接成功检查
+      if (!started) {
+        if (mounted) {
+          _showError('VPN 启动失败');
+          setState(() {
+            _isConnecting = false;
+            _connectionStatus = '未连接';
+          });
+        }
+        return;
+      }
+
+      // Step 4: 连接成功
       if (mounted) {
         setState(() {
           _connectionStatus = '已连接';
@@ -554,14 +667,17 @@ class _HomeContentState extends State<HomeContent> {
     widget.onConnectionStateChanged(widget.isProxyEnabled);
 
     try {
-      // Step 1: 清除系统代理
-      await SystemProxyHelper.clearProxy();
-
-      // Step 2: 停止 sing-box（包含清理残留进程）
-      await SingboxManager.stop();
-
-      // 等待一下确保完全停止
-      await Future.delayed(const Duration(milliseconds: 500));
+      if (Platform.isWindows) {
+        // Windows 平台：清除系统代理 + 停止 sing-box
+        await SystemProxyHelper.clearProxy();
+        await SingboxManager.stop();
+        
+        // 等待一下确保完全停止
+        await Future.delayed(const Duration(milliseconds: 500));
+      } else if (Platform.isAndroid) {
+        // Android 平台：停止 VPN 服务
+        await AndroidVpnHelper.stopVpn();
+      }
 
       // 断开成功
       if (mounted) {
@@ -591,22 +707,42 @@ class _HomeContentState extends State<HomeContent> {
     try {
       print('🔄 正在应用代理模式更改...');
       
-      // 1. 重新生成配置
-      await SingboxManager.generateConfigFromNode(
-        node: _selectedNodeModel!,
-        mixedPort: 15808,
-        proxyMode: _proxyMode,
-      );
-      
-      // 2. 停止 sing-box
-      await SingboxManager.stop();
-      await Future.delayed(const Duration(milliseconds: 500));
-      
-      // 3. 重新启动 sing-box
-      bool started = await SingboxManager.start();
-      
-      if (!started) {
-        throw Exception('重启 sing-box 失败');
+      if (Platform.isWindows) {
+        // Windows 平台：重新生成配置并重启 sing-box
+        
+        // 1. 重新生成配置
+        await SingboxManager.generateConfigFromNode(
+          node: _selectedNodeModel!,
+          mixedPort: 15808,
+          proxyMode: _proxyMode,
+        );
+        
+        // 2. 停止 sing-box
+        await SingboxManager.stop();
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        // 3. 重新启动 sing-box
+        bool started = await SingboxManager.start();
+        
+        if (!started) {
+          throw Exception('重启 sing-box 失败');
+        }
+      } else if (Platform.isAndroid) {
+        // Android 平台：重新启动 VPN 服务
+        
+        // 1. 停止 VPN
+        await AndroidVpnHelper.stopVpn();
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        // 2. 重新启动 VPN
+        bool started = await AndroidVpnHelper.startVpn(
+          node: _selectedNodeModel!,
+          proxyMode: _proxyMode,
+        );
+        
+        if (!started) {
+          throw Exception('重启 Android VPN 失败');
+        }
       }
       
       print('✅ 代理模式更改已应用');
@@ -645,9 +781,9 @@ class _HomeContentState extends State<HomeContent> {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
           // 功能区块（出站模式 + 流量统计）
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -674,28 +810,28 @@ class _HomeContentState extends State<HomeContent> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
                       constraints: const BoxConstraints(minHeight: 132),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 10,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Column(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
+                      children: [
+                        const Text(
                             '出站模式',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF333333),
-                            ),
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF333333),
                           ),
+                        ),
                           const SizedBox(height: 8),
                           RadioListTile<ProxyMode>(
                             dense: true,
@@ -768,9 +904,9 @@ class _HomeContentState extends State<HomeContent> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
                       constraints: const BoxConstraints(minHeight: 132),
-                      decoration: BoxDecoration(
+                          decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withOpacity(0.05),
@@ -863,7 +999,7 @@ class _HomeContentState extends State<HomeContent> {
                                   const Icon(Icons.arrow_upward, size: 14, color: Color(0xFFC8CCD2)),
                                   const SizedBox(width: 8),
                                   Expanded(
-                                    child: Text(
+                          child: Text(
                                       uploadSpeed.replaceAll('/s', ''),
                                       style: const TextStyle(fontSize: 14, color: Color(0xFF333333)),
                                     ),
@@ -918,7 +1054,7 @@ class _HomeContentState extends State<HomeContent> {
                 child: Column(
                   children: [
             
-                    
+
                     // 当前节点
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -945,7 +1081,12 @@ class _HomeContentState extends State<HomeContent> {
                               setState(() {
                                 _selectedNodeModel = selectedNodeModel;
                               });
+                              
+                              // 保存节点对象到持久化存储
+                              await NodeStorageService.saveSelectedNode(selectedNodeModel);
+                              
                               print('✅ 已选择节点: ${selectedNodeModel.displayName}');
+                              print('💾 节点已保存，rawConfig 长度: ${selectedNodeModel.rawConfig.length}');
                             }
                           },
                           child: Row(
@@ -999,7 +1140,7 @@ class _HomeContentState extends State<HomeContent> {
               const SizedBox(height: 100), // 底部留空给 FAB
             ],
           ),
-        );
+    );
   }
 
   /// 构建订阅信息卡片

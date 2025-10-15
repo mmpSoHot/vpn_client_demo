@@ -24,13 +24,13 @@ class ApiConfig {
   // ==================== API网关地址 ====================
   
   /// 开发环境API地址
-  static String devBaseUrl = 'http://127.0.0.1:8004/api/v1';
+  static String devBaseUrl = 'http://192.168.110.120:8004/api/v1';
   
   /// 测试环境API地址
-  static String stagingBaseUrl = 'http://127.0.0.1:8004/api/v1';
+  static String stagingBaseUrl = 'http://192.168.110.120:8004/api/v1';
   
   /// 生产环境API地址
-  static String prodBaseUrl = 'http://127.0.0.1:8004/api/v1';
+  static String prodBaseUrl = 'http://192.168.110.120:8004/api/v1';
 
   // ==================== 超时配置 ====================
   

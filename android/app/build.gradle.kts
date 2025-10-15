@@ -18,13 +18,20 @@ android {
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_11.toString()
     }
+    
+    // 配置 AAR 仓库
+    repositories {
+        flatDir {
+            dirs("libs")
+        }
+    }
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.demo2"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = flutter.minSdkVersion  // VPN 服务最低需要 Android 5.0
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -41,4 +48,15 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // libbox.aar - sing-box Android 绑定库
+    implementation(files("libs/libbox.aar"))
+    
+    // Android 核心库
+    implementation("androidx.core:core-ktx:1.12.0")
+    
+    // 协程支持
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
