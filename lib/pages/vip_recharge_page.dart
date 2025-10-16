@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_html/flutter_html.dart';
+import 'plan_checkout_page.dart';
 import '../services/api_service.dart';
 import '../models/plan_model.dart';
 import '../utils/auth_helper.dart';
@@ -165,7 +166,10 @@ class _VipRechargePageState extends State<VipRechargePage> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF5B7CFF), Color(0xFF7C4DFF)],
+                  colors: [
+                    Color.fromRGBO(254, 75, 72, 1),   // 主色 rgb(254,75,72)
+                    Color.fromRGBO(245, 67, 63, 1),   // 相近加深色
+                  ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -256,10 +260,18 @@ class _VipRechargePageState extends State<VipRechargePage> {
                     setState(() {
                       _selectedPlanId = plan.id;
                     });
-                    _showPeriodPicker(plan);
+                    final opts = plan.getAvailablePriceOptions();
+                    final init = (_selectedPeriod != null && opts.any((o) => o.period == _selectedPeriod))
+                        ? _selectedPeriod
+                        : (opts.isNotEmpty ? opts.first.period : null);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => PlanCheckoutPage(planId: plan.id, initialPeriod: init),
+                      ),
+                    );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF5B7CFF),
+                    backgroundColor: const Color.fromRGBO(254, 75, 72, 1),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),

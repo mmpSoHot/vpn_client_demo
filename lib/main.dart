@@ -68,8 +68,19 @@ class MyApp extends StatelessWidget {
       title: '代理工具',
       debugShowCheckedModeBanner: false, // 去掉右上角的 debug 标记
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF007AFF)),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color.fromRGBO(244, 66, 62, 1)),
         useMaterial3: true,
+        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+          selectedItemColor: Color.fromRGBO(244, 66, 62, 1),
+          selectedIconTheme: IconThemeData(color: Color.fromRGBO(244, 66, 62, 1)),
+          selectedLabelStyle: TextStyle(color: Color.fromRGBO(244, 66, 62, 1)),
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          indicatorColor: const Color.fromRGBO(244, 66, 62, 0.16),
+          labelTextStyle: MaterialStateProperty.all(
+            const TextStyle(color: Color.fromRGBO(244, 66, 62, 1)),
+          ),
+        ),
       ),
       home: const AuthWrapper(),
     );

@@ -158,7 +158,7 @@ class _HomePageState extends State<HomePage> {
             _currentIndex = index;
           });
         },
-        selectedItemColor: const Color(0xFF007AFF),
+        selectedItemColor: const Color.fromRGBO(244, 66, 62, 1),
         unselectedItemColor: const Color(0xFF999999),
         backgroundColor: Colors.white,
         elevation: 8,

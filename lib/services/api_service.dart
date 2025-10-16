@@ -123,6 +123,14 @@ class ApiService {
     );
   }
 
+  /// 根据ID获取套餐详情
+  Future<ApiResponse> fetchPlanById(int id) async {
+    return await _httpClient.get(
+      ApiConfig.planFetchPath,
+      params: { 'id': id },
+    );
+  }
+
   /// 获取VIP信息
   Future<ApiResponse> getVipInfo() async {
     return await _httpClient.get(ApiConfig.vipInfoPath);
@@ -150,6 +158,45 @@ class ApiService {
       params: {
         'page': page,
         'page_size': pageSize,
+      },
+    );
+  }
+
+  /// 拉取用户订单（用于检查未支付订单）
+  Future<ApiResponse> fetchOrders() async {
+    return await _httpClient.get(ApiConfig.orderFetchPath);
+  }
+
+  /// 取消订单（按交易号）
+  Future<ApiResponse> cancelOrderByTradeNo(String tradeNo) async {
+    return await _httpClient.post(
+      ApiConfig.orderCancelPath,
+      data: {
+        'trade_no': tradeNo,
+      },
+    );
+  }
+
+  /// 创建订单
+  /// [planId] 套餐ID
+  /// [periodKey] 购买周期键（month_price|quarter_price|half_year_price|year_price）
+  Future<ApiResponse> createOrder({required int planId, required String periodKey}) async {
+    return await _httpClient.post(
+      ApiConfig.orderSavePath,
+      data: {
+        'plan_id': planId,
+        'period': periodKey,
+      },
+    );
+  }
+
+  /// 验证优惠券
+  Future<ApiResponse> checkCoupon({required int planId, required String code}) async {
+    return await _httpClient.post(
+      ApiConfig.couponCheckPath,
+      data: {
+        'plan_id': planId,
+        'code': code,
       },
     );
   }

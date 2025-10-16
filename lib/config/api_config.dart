@@ -59,6 +59,10 @@ class ApiConfig {
   static const String vipRechargePath = '/vip/recharge';
   static const String vipOrdersPath = '/vip/orders';
   static const String planFetchPath = '/user/plan/fetch';
+  static const String orderSavePath = '/user/order/save';
+  static const String orderFetchPath = '/user/order/fetch';
+  static const String orderCancelPath = '/user/order/cancel';
+  static const String couponCheckPath = '/user/coupon/check';
   
   /// 节点相关接口
   static const String nodeListPath = '/node/list';
