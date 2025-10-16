@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:country_flags/country_flags.dart';
 import '../services/api_service.dart';
 import '../services/node_storage_service.dart';
 import '../models/node_model.dart';
-import '../utils/singbox_manager.dart';
 import '../utils/node_latency_tester.dart';
 
 class NodeSelectionPage extends StatefulWidget {
@@ -45,36 +45,6 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
   bool _isTesting = false; // 是否正在测试延迟
   Map<String, int> _latencyResults = {}; // 延迟测试结果
   
-  /// 在后台切换节点（不阻塞UI）
-  void _switchNodeInBackground(NodeModel nodeModel, String nodeName) {
-    Future(() async {
-      try {
-        print('🔄 后台切换节点: $nodeName');
-        
-        // 生成配置
-        await SingboxManager.generateConfigFromNode(
-          node: nodeModel,
-        );
-        
-        // 如果已经在运行，先停止
-        if (SingboxManager.isRunning()) {
-          await SingboxManager.stop();
-          await Future.delayed(const Duration(milliseconds: 500));
-        }
-        
-        // 启动 sing-box
-        final started = await SingboxManager.start();
-        
-        if (started) {
-          print('✅ 节点切换成功: $nodeName');
-        } else {
-          print('❌ 节点切换失败: sing-box 启动失败');
-        }
-      } catch (e) {
-        print('❌ 后台切换节点失败: $e');
-      }
-    });
-  }
 
   List<Map<String, dynamic>> _nodes = [
     {
@@ -149,64 +119,67 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
     },
   ];
 
-  // ===================== 国旗 Emoji 辅助 =====================
-  // 规则：
-  // 1) 如果名称本身已有国旗 Emoji，则不再重复添加
-  // 2) 如果名称以国家/地区字母前缀开头（如 HK/US/JP），优先使用该前缀生成国旗
-  // 3) 否则根据名称/位置中的关键字做模糊映射
-  String _flagForNameAndLocation(String name, String location) {
-    final lowerName = name.toLowerCase();
-    // 已有国旗则返回空，避免重复
-    final hasFlag = RegExp(r"[\u{1F1E6}-\u{1F1FF}]{2}", unicode: true).hasMatch(name);
-    if (hasFlag) return '';
+  // ===================== 国旗代码提取 =====================
+  /// 从节点名称和位置提取国家代码（用于 country_flags 包）
+  /// 返回 2 字母国家代码，如 'HK', 'US', 'JP'
+  String? _getCountryCode(String name, String location) {
+    // 先检查名称中是否有 Emoji 国旗（如果有就提取代码）
+    final emojiMatch = RegExp(r"[\u{1F1E6}-\u{1F1FF}]", unicode: true).firstMatch(name);
+    if (emojiMatch != null) {
+      // 如果有 Emoji，提取对应的国家代码
+      final emoji = name.substring(emojiMatch.start, emojiMatch.start + 2);
+      return _countryCodeFromEmoji(emoji);
+    }
 
     // 提取前缀字母（在空格或竖线 '|' 之前），如 "HK 香港|05|1.2x" 或 "US|01"
     final prefixMatch = RegExp(r"^([a-zA-Z]{2,3})(?=\s|\||$)").firstMatch(name);
     if (prefixMatch != null) {
       final code = prefixMatch.group(1)!.toUpperCase();
-      final flag = _flagFromISO(code);
-      if (flag.isNotEmpty) return flag;
+      if (code == 'UK') return 'GB'; // UK 用 GB 代码
+      if (code.length == 2) return code;
     }
 
     // 关键字映射（名称 + 位置）
     final text = (name + ' ' + location).toLowerCase();
-    if (text.contains('香港') || text.contains('hong') || text.contains(' hk')) return '🇭🇰';
-    if (text.contains('台湾') || text.contains('taiwan') || text.contains(' tw')) return '🇹🇼';
-    if (text.contains('新加坡') || text.contains('singapore') || text.contains(' sg')) return '🇸🇬';
-    if (text.contains('日本') || text.contains('japan') || text.contains(' jp')) return '🇯🇵';
-    if (text.contains('韩国') || text.contains('korea') || text.contains(' kr')) return '🇰🇷';
-    if (text.contains('美国') || text.contains('usa') || text.contains(' us')) return '🇺🇸';
-    if (text.contains('英国') || text.contains('united kingdom') || text.contains(' uk') || text.contains(' gb')) return '🇬🇧';
-    if (text.contains('德国') || text.contains('germany') || text.contains(' de')) return '🇩🇪';
-    if (text.contains('法国') || text.contains('france') || text.contains(' fr')) return '🇫🇷';
-    if (text.contains('加拿大') || text.contains('canada') || text.contains(' ca')) return '🇨🇦';
-    if (text.contains('澳大利亚') || text.contains('australia') || text.contains(' au')) return '🇦🇺';
-    if (text.contains('印度') || text.contains('india') || text.contains(' in')) return '🇮🇳';
-    if (text.contains('俄罗斯') || text.contains('russia') || text.contains(' ru')) return '🇷🇺';
-    if (text.contains('巴西') || text.contains('brazil') || text.contains(' br')) return '🇧🇷';
-    if (text.contains('沙特') || text.contains('saudi') || text.contains(' sa')) return '🇸🇦';
-    if (text.contains('阿根廷') || text.contains('argentina') || text.contains(' ar')) return '🇦🇷';
-    if (text.contains('瑞典') || text.contains('sweden') || text.contains(' se')) return '🇸🇪';
-    if (text.contains('波兰') || text.contains('poland') || text.contains(' pl')) return '🇵🇱';
-    if (text.contains('土耳其') || text.contains('turkey') || text.contains(' tr')) return '🇹🇷';
-    if (text.contains('菲律宾') || text.contains('philippines') || text.contains(' ph')) return '🇵🇭';
-    if (text.contains('泰国') || text.contains('thailand') || text.contains(' th')) return '🇹🇭';
-    if (text.contains('越南') || text.contains('vietnam') || text.contains(' vn')) return '🇻🇳';
-    if (text.contains('马来西亚') || text.contains('malaysia') || text.contains(' my')) return '🇲🇾';
-    return '';
+    if (text.contains('香港') || text.contains('hong')) return 'HK';
+    if (text.contains('台湾') || text.contains('taiwan')) return 'TW';
+    if (text.contains('新加坡') || text.contains('singapore')) return 'SG';
+    if (text.contains('日本') || text.contains('japan')) return 'JP';
+    if (text.contains('韩国') || text.contains('korea')) return 'KR';
+    if (text.contains('美国') || text.contains('usa') || text.contains('america')) return 'US';
+    if (text.contains('英国') || text.contains('kingdom')) return 'GB';
+    if (text.contains('德国') || text.contains('germany')) return 'DE';
+    if (text.contains('法国') || text.contains('france')) return 'FR';
+    if (text.contains('加拿大') || text.contains('canada')) return 'CA';
+    if (text.contains('澳大利亚') || text.contains('australia')) return 'AU';
+    if (text.contains('印度') || text.contains('india')) return 'IN';
+    if (text.contains('俄罗斯') || text.contains('russia')) return 'RU';
+    if (text.contains('巴西') || text.contains('brazil')) return 'BR';
+    if (text.contains('沙特') || text.contains('saudi')) return 'SA';
+    if (text.contains('阿根廷') || text.contains('argentina')) return 'AR';
+    if (text.contains('瑞典') || text.contains('sweden')) return 'SE';
+    if (text.contains('波兰') || text.contains('poland')) return 'PL';
+    if (text.contains('土耳其') || text.contains('turkey')) return 'TR';
+    if (text.contains('菲律宾') || text.contains('philippines')) return 'PH';
+    if (text.contains('泰国') || text.contains('thailand')) return 'TH';
+    if (text.contains('越南') || text.contains('vietnam')) return 'VN';
+    if (text.contains('马来西亚') || text.contains('malaysia')) return 'MY';
+    if (text.contains('芬兰') || text.contains('finland')) return 'FI';
+    if (text.contains('塞尔维亚') || text.contains('serbia')) return 'RS';
+    if (text.contains('立陶宛') || text.contains('lithuania')) return 'LT';
+    if (text.contains('波黑') || text.contains('bosnia')) return 'BA';
+    if (text.contains('保加利亚') || text.contains('bulgaria')) return 'BG';
+    return null;
   }
 
-  /// 将 ISO 两位/三位（常用两位）代码转换为国旗 Emoji（区域指示符）
-  String _flagFromISO(String code) {
-    final iso = code.length == 3 && code.toUpperCase() == 'UK' ? 'GB' : code.toUpperCase();
-    if (iso.length < 2) return '';
-    final a = iso.codeUnitAt(0);
-    final b = iso.codeUnitAt(1);
-    if (!(a >= 65 && a <= 90 && b >= 65 && b <= 90)) return '';
-    const base = 0x1F1E6; // Regional Indicator Symbol Letter A
-    final r1 = String.fromCharCode(base + (a - 65));
-    final r2 = String.fromCharCode(base + (b - 65));
-    return r1 + r2;
+  /// 从 Emoji 国旗提取国家代码
+  String? _countryCodeFromEmoji(String emoji) {
+    if (emoji.length < 2) return null;
+    const base = 0x1F1E6;
+    final a = emoji.codeUnitAt(0) - base;
+    final b = emoji.codeUnitAt(1) - base;
+    if (a < 0 || a > 25 || b < 0 || b > 25) return null;
+    return String.fromCharCode(65 + a) + String.fromCharCode(65 + b);
   }
 
   @override
@@ -449,13 +422,6 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
     return NodeLatencyTester.formatLatency(latency);
   }
 
-  /// 获取节点延迟颜色
-  Color _getLatencyColor(String nodeName) {
-    if (nodeName == '自动选择') return const Color(0xFF999999);
-    
-    final latency = _latencyResults[nodeName] ?? 0;
-    return NodeLatencyTester.getLatencyColor(latency);
-  }
 
 
   @override
@@ -600,205 +566,169 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
                           ],
                         ),
                       )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    : GridView.builder(
+                        padding: const EdgeInsets.all(12),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                          childAspectRatio: 1.6,
+                        ),
                         itemCount: _nodes.length,
                         itemBuilder: (context, index) {
                 final node = _nodes[index];
                 final isSelected = widget.selectedNode == node['name'];
                 
                 return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: isSelected ? node['color'].withOpacity(0.08) : Colors.white,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: isSelected ? node['color'] : const Color(0xFFE0E0E0),
+                      color: isSelected ? node['color'] : const Color(0xFFE5E7EB),
                       width: isSelected ? 2 : 1,
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 10,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
                   ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-         
-                    title: Row(
-                      children: [
-                        Expanded(
-                          child: Row(
-                            children: [
-                              // 国旗 Emoji（根据名称/位置推断）
-                              Builder(builder: (_) {
-                                final flag = _flagForNameAndLocation(
-                                  node['name']?.toString() ?? '',
-                                  node['location']?.toString() ?? '',
-                                );
-                                return flag.isEmpty
-                                    ? const SizedBox.shrink()
-                                    : Padding(
-                                        padding: const EdgeInsets.only(right: 6),
-                                        child: Text(
-                                          flag,
-                                          style: const TextStyle(fontSize: 16),
-                                        ),
-                                      );
-                              }),
-                              Expanded(
-                                child: Text(
-                                  node['name'],
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: isSelected ? node['color'] : const Color(0xFF333333),
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (node['protocol'] != null) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF007AFF).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              node['protocol'],
-                              style: const TextStyle(
-                                color: Color(0xFF007AFF),
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                        if (node['rate'] != null) ...[
-                          const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFF9800).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              '${node['rate']}x',
-                              style: const TextStyle(
-                                color: Color(0xFFFF9800),
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    subtitle: Text(
-                      node['location'],
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Color(0xFF666666),
-                      ),
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // 延迟显示 / 测试中占位
-                        Builder(builder: (_) {
-                          final text = _getNodeLatency(node['name']);
-                          // 数字统一使用绿色显示
-                          const textColor = Color(0xFF4CAF50);
-                          final isTesting = _isTesting && (text == '--');
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: textColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: isTesting
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () {
+                        final NodeModel? nodeModel = node['nodeModel'];
+                        Navigator.pop(context, nodeModel);
+                        if (widget.onNodeSelected != null) {
+                          widget.onNodeSelected!(node['name']);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // 顶部：国旗 + 节点名称
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // 国旗图标
+                                Builder(builder: (_) {
+                                  final countryCode = _getCountryCode(
+                                    node['name']?.toString() ?? '',
+                                    node['location']?.toString() ?? '',
+                                  );
+                                  if (countryCode == null) return const SizedBox.shrink();
+                                  
+                                  return ClipRRect(
+                                    borderRadius: BorderRadius.circular(3),
+                                    child: CountryFlag.fromCountryCode(
+                                      countryCode,
+                                      theme: const ImageTheme(
+                                        width: 24,
+                                        height: 18,
+                                        shape: RoundedRectangle(3),
+                                      ),
                                     ),
-                                  )
-                                : Text(
+                                  );
+                                }),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    node['name'],
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: isSelected ? node['color'] : const Color(0xFF1F2937),
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 2,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const Spacer(),
+                            // 中间：协议 + 倍率
+                            Wrap(
+                              spacing: 4,
+                              runSpacing: 4,
+                              children: [
+                                if (node['protocol'] != null)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF6366F1).withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      node['protocol'],
+                                      style: const TextStyle(
+                                        color: Color(0xFF6366F1),
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                if (node['rate'] != null)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF59E0B).withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      '${node['rate']}x',
+                                      style: const TextStyle(
+                                        color: Color(0xFFF59E0B),
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const Spacer(),
+                            // 底部：延迟 + 选中标记
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Builder(builder: (_) {
+                                  final text = _getNodeLatency(node['name']);
+                                  final isTesting = _isTesting && (text == '--');
+                                  
+                                  if (isTesting) {
+                                    return const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFF6366F1),
+                                      ),
+                                    );
+                                  }
+                                  
+                                  return Text(
                                     text,
                                     style: const TextStyle(
-                                      color: textColor,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
+                                      color: Color(0xFF10B981),
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
                                     ),
+                                  );
+                                }),
+                                if (isSelected)
+                                  Icon(
+                                    Icons.check_circle,
+                                    color: node['color'],
+                                    size: 20,
                                   ),
-                          );
-                        }),
-                        // 仅显示延迟，不提供单个节点测试按钮
-                        // 选中标记
-                        if (isSelected) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            width: 20,
-                            height: 20,
-                            decoration: BoxDecoration(
-                              color: node['color'],
-                              shape: BoxShape.circle,
+                              ],
                             ),
-                            child: const Icon(
-                              Icons.check,
-                              color: Colors.white,
-                              size: 14,
-                            ),
-                          ),
-                        ],
-                      ],
+                          ],
+                        ),
+                      ),
                     ),
-                    onTap: () {
-                      // 获取节点对象
-                      final NodeModel? nodeModel = node['nodeModel'];
-                      
-                      // 立即关闭 BottomSheet 并返回节点对象
-                      Navigator.pop(context, nodeModel);
-                      
-                      // 通知父组件节点已选择
-                      if (widget.onNodeSelected != null) {
-                        widget.onNodeSelected!(node['name']);
-                      }
-                      
-                      if (nodeModel != null) {
-                        // 显示切换提示
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('正在切换到：${node['name']}...'),
-                            backgroundColor: const Color(0xFF2196F3),
-                            duration: const Duration(seconds: 1),
-                          ),
-                        );
-                        
-                        // 在后台异步执行重启操作，不阻塞UI
-                        _switchNodeInBackground(nodeModel, node['name']);
-                      } else {
-                        // 自动选择节点
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('已选择：${node['name']}'),
-                            backgroundColor: const Color(0xFF4CAF50),
-                            duration: const Duration(milliseconds: 800),
-                          ),
-                        );
-                      }
-                    },
                   ),
                 );
-                        },
-                      ),
+                      },
+                    ),
           ),
         ],
       ),
