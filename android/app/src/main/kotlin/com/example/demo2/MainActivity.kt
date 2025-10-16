@@ -65,25 +65,75 @@ class MainActivity : FlutterActivity() {
     }
     
     private fun copyAssetsToWorkingDir(workingDir: File) {
-        val srsFiles = listOf(
-            "geosite-private.srs",
-            "geosite-cn.srs",
-            "geoip-cn.srs"
+        // 规则文件映射：文件名 -> assets 子目录
+        val srsFilesMap = mapOf(
+            "geosite-private.srs" to "geosite",
+            "geosite-cn.srs" to "geosite",
+            "geoip-cn.srs" to "geoip"
         )
         
-        for (fileName in srsFiles) {
+        android.util.Log.d("MainActivity", "📦 开始复制 ${srsFilesMap.size} 个规则文件到: ${workingDir.path}")
+        
+        // 先列出 assets 目录中的文件（用于调试）
+        try {
+            val geositeFiles = assets.list("flutter_assets/assets/datas/geosite")
+            val geoipFiles = assets.list("flutter_assets/assets/datas/geoip")
+            if (geositeFiles != null) {
+                android.util.Log.d("MainActivity", "📁 geosite 文件: ${geositeFiles.joinToString(", ")}")
+            }
+            if (geoipFiles != null) {
+                android.util.Log.d("MainActivity", "📁 geoip 文件: ${geoipFiles.joinToString(", ")}")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "❌ 列出 assets 文件失败", e)
+        }
+        
+        for ((fileName, subDir) in srsFilesMap) {
             val destFile = File(workingDir, fileName)
-            // 每次都覆盖,确保使用最新的规则文件
             try {
-                assets.open("srss/$fileName").use { input ->
+                android.util.Log.d("MainActivity", "   处理文件: $fileName (从 $subDir)")
+                
+                // 打开 assets 文件（Flutter assets 需要加 flutter_assets/ 前缀）
+                val assetPath = "flutter_assets/assets/datas/$subDir/$fileName"
+                android.util.Log.d("MainActivity", "      assets 路径: $assetPath")
+                assets.open(assetPath).use { input ->
+                    val fileSize = input.available()
+                    android.util.Log.d("MainActivity", "      原文件大小: $fileSize 字节")
+                    
+                    // 写入目标文件
                     destFile.outputStream().use { output ->
-                        input.copyTo(output)
+                        val bytesCopied = input.copyTo(output)
+                        android.util.Log.d("MainActivity", "      已复制: $bytesCopied 字节")
                     }
                 }
-                android.util.Log.d("MainActivity", "✅ 复制规则文件: $fileName -> ${destFile.path}")
+                
+                // 验证文件是否存在且有内容
+                if (destFile.exists()) {
+                    val size = destFile.length()
+                    android.util.Log.d("MainActivity", "   ✅ 复制成功: ${destFile.path} ($size 字节)")
+                } else {
+                    android.util.Log.e("MainActivity", "   ❌ 文件不存在: ${destFile.path}")
+                }
             } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "❌ 复制规则文件失败: $fileName", e)
+                android.util.Log.e("MainActivity", "   ❌ 复制规则文件失败: $fileName", e)
+                android.util.Log.e("MainActivity", "      错误类型: ${e.javaClass.simpleName}")
+                android.util.Log.e("MainActivity", "      错误消息: ${e.message}")
             }
+        }
+        
+        // 列出工作目录中的所有文件（验证）
+        try {
+            val files = workingDir.listFiles()
+            if (files != null && files.isNotEmpty()) {
+                android.util.Log.d("MainActivity", "📁 工作目录中的文件:")
+                files.forEach { file ->
+                    android.util.Log.d("MainActivity", "   - ${file.name} (${file.length()} 字节)")
+                }
+            } else {
+                android.util.Log.w("MainActivity", "⚠️ 工作目录为空: ${workingDir.path}")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "❌ 列出工作目录文件失败", e)
         }
     }
     

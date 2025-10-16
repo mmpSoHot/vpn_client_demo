@@ -74,6 +74,9 @@ class VpnService : AndroidVpnService() {
             Log.d(TAG, "启动 VPN...")
             Log.d(TAG, "配置长度: ${configJson.length} 字符")
             
+            // 确保规则文件存在（如果不存在则从 assets 复制）
+            ensureRuleFilesExist()
+            
             // 预先创建 cache.db 文件
             try {
                 val cacheFile = java.io.File(cacheDir, "cache.db")
@@ -92,9 +95,11 @@ class VpnService : AndroidVpnService() {
             val platformInterface = PlatformInterfaceImpl(this)
             
             // 创建 sing-box 实例
+            Log.d(TAG, "📦 创建 sing-box 实例...")
             boxInstance = Libbox.newService(configJson, platformInterface)
             
             // 启动 sing-box
+            Log.d(TAG, "🚀 启动 sing-box...")
             boxInstance?.start()
             
             Log.d(TAG, "✅ VPN 启动成功")
@@ -181,6 +186,101 @@ class VpnService : AndroidVpnService() {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
+    }
+    
+    /**
+     * 确保规则文件存在
+     * 如果文件不存在，则从 assets 复制
+     */
+    private fun ensureRuleFilesExist() {
+        val workingDir = java.io.File(filesDir, "sing-box/run")
+        
+        // 规则文件映射：文件名 -> assets 子目录
+        val requiredFilesMap = mapOf(
+            "geosite-private.srs" to "geosite",
+            "geosite-cn.srs" to "geosite",
+            "geoip-cn.srs" to "geoip"
+        )
+        
+        Log.d(TAG, "🔍 检查规则文件...")
+        Log.d(TAG, "   工作目录: ${workingDir.path}")
+        
+        // 确保目录存在
+        if (!workingDir.exists()) {
+            workingDir.mkdirs()
+            Log.d(TAG, "   ✅ 创建工作目录: ${workingDir.path}")
+        }
+        
+        var needCopy = false
+        for ((fileName, _) in requiredFilesMap) {
+            val file = java.io.File(workingDir, fileName)
+            if (!file.exists()) {
+                Log.w(TAG, "   ⚠️ $fileName 不存在，需要从 assets 复制")
+                needCopy = true
+                break
+            } else {
+                Log.d(TAG, "   ✅ $fileName (${file.length()} 字节)")
+            }
+        }
+        
+        // 如果需要，从 assets 复制文件
+        if (needCopy) {
+            Log.d(TAG, "📦 开始从 assets 复制规则文件...")
+            copyAssetsToWorkingDir(workingDir, requiredFilesMap)
+            
+            // 验证复制后的文件
+            Log.d(TAG, "🔍 验证复制的文件...")
+            var allFilesExist = true
+            for ((fileName, _) in requiredFilesMap) {
+                val file = java.io.File(workingDir, fileName)
+                if (file.exists()) {
+                    Log.d(TAG, "   ✅ $fileName (${file.length()} 字节)")
+                } else {
+                    Log.e(TAG, "   ❌ $fileName 仍然不存在!")
+                    allFilesExist = false
+                }
+            }
+            
+            if (!allFilesExist) {
+                throw Exception("规则文件复制失败！请检查 assets 目录")
+            }
+        }
+    }
+    
+    /**
+     * 从 assets 复制文件到工作目录
+     */
+    private fun copyAssetsToWorkingDir(workingDir: java.io.File, filesMap: Map<String, String>) {
+        val assetManager = assets
+        
+        for ((fileName, subDir) in filesMap) {
+            val destFile = java.io.File(workingDir, fileName)
+            try {
+                Log.d(TAG, "   复制: $fileName (从 $subDir)")
+                
+                // 打开 assets 文件（Flutter assets 需要加 flutter_assets/ 前缀）
+                val assetPath = "flutter_assets/assets/datas/$subDir/$fileName"
+                Log.d(TAG, "      assets 路径: $assetPath")
+                assetManager.open(assetPath).use { input ->
+                    // 写入目标文件
+                    destFile.outputStream().use { output ->
+                        val bytesCopied = input.copyTo(output)
+                        Log.d(TAG, "      已复制: $bytesCopied 字节")
+                    }
+                }
+                
+                // 验证文件
+                if (destFile.exists() && destFile.length() > 0) {
+                    Log.d(TAG, "   ✅ 复制成功: ${destFile.name}")
+                } else {
+                    Log.e(TAG, "   ❌ 复制失败: ${destFile.name}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "   ❌ 复制规则文件失败: $fileName", e)
+                Log.e(TAG, "      错误: ${e.message}")
+                throw Exception("无法复制规则文件 $fileName: ${e.message}")
+            }
+        }
     }
 }
 

@@ -522,19 +522,19 @@ class NodeConfigConverter {
           "tag": "geosite-private",
           "type": "local",
           "format": "binary",
-          "path": "$geoRuleBasePath/geosite-private.srs"
+          "path": "$geoRuleBasePath/geosite/geosite-private.srs"
         },
         {
           "tag": "geosite-cn",
           "type": "local",
           "format": "binary",
-          "path": "$geoRuleBasePath/geosite-cn.srs"
+          "path": "$geoRuleBasePath/geosite/geosite-cn.srs"
         },
         {
           "tag": "geoip-cn",
           "type": "local",
           "format": "binary",
-          "path": "$geoRuleBasePath/geoip-cn.srs"
+          "path": "$geoRuleBasePath/geoip/geoip-cn.srs"
         }
       ],
       "final": "proxy"
@@ -572,7 +572,7 @@ class NodeConfigConverter {
           "tag": "geosite-private",
           "type": "local",
           "format": "binary",
-          "path": "$geoRuleBasePath/geosite-private.srs"
+          "path": "$geoRuleBasePath/geosite/geosite-private.srs"
         }
       ],
       "final": "proxy"
@@ -807,27 +807,31 @@ class NodeConfigConverter {
 
   /// 获取 geo 规则文件基础路径
   static String _getGeoRuleBasePath() {
-    // Android 暂不支持本地规则文件
+    // Android 暂不支持本地规则文件（使用相对路径）
     if (Platform.isAndroid) {
-      return '/data/local/tmp/srss';  // 临时路径,实际不会使用
+      return '/data/local/tmp/assets/datas';  // 临时路径,实际不会使用
     }
     
-    // 使用项目中的 srss 目录
+    // 使用项目中的 assets/datas 目录
+    // Windows/Linux/macOS 需要返回包含 geosite 和 geoip 子目录的父目录
+    
     // 开发环境：从项目根目录
-    final devPath = path.join(Directory.current.path, 'srss');
-    if (Directory(devPath).existsSync()) {
-      return devPath;
+    final devPathGeosite = path.join(Directory.current.path, 'assets', 'datas', 'geosite');
+    final devPathGeoip = path.join(Directory.current.path, 'assets', 'datas', 'geoip');
+    if (Directory(devPathGeosite).existsSync() && Directory(devPathGeoip).existsSync()) {
+      return path.join(Directory.current.path, 'assets', 'datas');
     }
 
     // 发布环境：从 exe 同级目录
     final exeDir = path.dirname(Platform.resolvedExecutable);
-    final bundlePath = path.join(exeDir, 'data', 'flutter_assets', 'srss');
-    if (Directory(bundlePath).existsSync()) {
-      return bundlePath;
+    final bundlePathGeosite = path.join(exeDir, 'data', 'flutter_assets', 'assets', 'datas', 'geosite');
+    final bundlePathGeoip = path.join(exeDir, 'data', 'flutter_assets', 'assets', 'datas', 'geoip');
+    if (Directory(bundlePathGeosite).existsSync() && Directory(bundlePathGeoip).existsSync()) {
+      return path.join(exeDir, 'data', 'flutter_assets', 'assets', 'datas');
     }
 
     // 备用：从当前目录
-    return path.join(Directory.current.path, 'srss');
+    return path.join(Directory.current.path, 'assets', 'datas');
   }
 
   /// 获取缓存数据库路径
