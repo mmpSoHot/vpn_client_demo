@@ -56,7 +56,7 @@ class AndroidVpnHelper {
         node: node,
         mixedPort: 15808,  // Android 可能不使用，但保留
         enableTun: true,   // Android 必须使用 TUN
-        enableStatsApi: false,  // Android 暂时禁用 stats API
+        enableStatsApi: true,  // 启用 stats API (用于网速监控)
         proxyMode: proxyMode,
       );
       
@@ -80,6 +80,17 @@ class AndroidVpnHelper {
       final encoder = JsonEncoder.withIndent('  ');
       print(encoder.convert(config));
       print('=' * 60);
+      
+      // 保存配置到应用内部目录（用于调试）
+      try {
+        // 使用应用缓存目录，不需要额外权限
+        final configFile = File('/data/data/com.example.demo2/cache/android-singbox-config.json');
+        await configFile.writeAsString(encoder.convert(config));
+        print('✅ 配置已保存到: ${configFile.path}');
+        print('   可以用 adb pull 导出: adb pull ${configFile.path}');
+      } catch (e) {
+        print('⚠️ 保存配置文件失败: $e');
+      }
       
       // 调用 Android 端启动 VPN
       final result = await _channel.invokeMethod('startVpn', {

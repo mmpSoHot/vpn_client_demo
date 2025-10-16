@@ -115,9 +115,23 @@ class VpnService : AndroidVpnService() {
         try {
             Log.d(TAG, "停止 VPN...")
             
-            boxInstance?.close()
+            // 关闭 sing-box 实例（在后台线程执行，避免阻塞主线程）
+            val box = boxInstance
             boxInstance = null
             
+            if (box != null) {
+                Thread {
+                    try {
+                        Log.d(TAG, "后台线程关闭 sing-box...")
+                        box.close()
+                        Log.d(TAG, "✅ sing-box 已关闭")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "关闭 sing-box 失败", e)
+                    }
+                }.start()
+            }
+            
+            // 立即关闭 VPN 接口
             vpnInterface?.close()
             vpnInterface = null
             
@@ -134,7 +148,17 @@ class VpnService : AndroidVpnService() {
     override fun onDestroy() {
         Log.d(TAG, "VpnService onDestroy")
         isServiceRunning = false
-        stopVpn()
+        
+        // 确保资源被清理（如果还没有清理）
+        try {
+            boxInstance?.close()
+            boxInstance = null
+            vpnInterface?.close()
+            vpnInterface = null
+        } catch (e: Exception) {
+            Log.e(TAG, "onDestroy 清理资源失败", e)
+        }
+        
         super.onDestroy()
     }
     
@@ -198,7 +222,8 @@ class VpnService : AndroidVpnService() {
         // 规则文件映射：文件名 -> assets 子目录
         val requiredFilesMap = mapOf(
             "geosite-private.srs" to "geosite",
-            "geosite-cn.srs" to "geosite",
+            "geosite-gfw.srs" to "geosite",
+            "geosite-geolocation-cn.srs" to "geosite",
             "geoip-cn.srs" to "geoip"
         )
         

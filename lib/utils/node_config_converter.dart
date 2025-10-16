@@ -320,6 +320,18 @@ class NodeConfigConverter {
         {
           "type": "direct",
           "tag": "direct"
+        },
+        {
+          "type": "direct",
+          "tag": "bypass"
+        },
+        {
+          "type": "block",
+          "tag": "block"
+        },
+        {
+          "type": "dns",
+          "tag": "dns-out"
         }
       ],
       "route": _getGlobalRouteConfig(),
@@ -587,8 +599,15 @@ class NodeConfigConverter {
     if (Platform.isAndroid || Platform.isIOS) {
       // sing-box-dev-next 在 Android 上有 chown 权限问题
       // 暂时禁用 cache_file,等待 stable 版本修复
-      // 或者使用 stable 分支重新编译 libbox.aar
-      return {};  // 不使用 experimental,接受默认行为
+      // 但 clash_api 可以正常使用
+      if (enableStatsApi) {
+        config["clash_api"] = {
+          "external_controller": "127.0.0.1:9090",
+          "external_ui": "",
+          "secret": ""
+        };
+      }
+      return config;
     }
     
     // Windows/macOS/Linux: 完整配置
@@ -624,7 +643,7 @@ class NodeConfigConverter {
     }
   }
 
-  /// Android 绕过大陆 DNS 配置 (完全参照 NekoBoxForAndroid)
+  /// Android 绕过大陆 DNS 配置 (参照 sing-box-for-android)
   static Map<String, dynamic> _getAndroidBypassCNDnsConfig(NodeModel node) {
     final server = _extractServerFromNode(node);
     
@@ -632,79 +651,72 @@ class NodeConfigConverter {
     
     return {
       "servers": [
-        // 1. 直连 DNS (国内 DNS) - 通过物理接口
+        // 1. 国内 DNS (直连) - 用于国内域名和代理服务器
         {
-          "address": "119.29.29.29",
           "tag": "dns-direct",
-          "detour": "bypass"  // 使用 bypass (有 auto_detect_interface)
+          "address": "223.5.5.5",
+          "detour": "direct"
         },
-        // 2. 代理 DNS (国外 DNS, 用 UDP) - 走代理
+        // 2. 国外 DNS (走代理) - 用于国外域名
         {
-          "address": "1.1.1.1",
           "tag": "dns-remote",
-          "detour": "proxy"  // 走代理
-        },
-        // 3. Block DNS
-        {
-          "address": "rcode://success",
-          "tag": "dns-block"
+          "address": "8.8.8.8",
+          "detour": "proxy"
         },
       ],
       "rules": [
-        // 1. 代理服务器域名用 dns-direct (避免循环)
+        // 1. 代理服务器域名用 direct DNS (避免循环)
         {
-          "domain": ["full:$server"],
+          "domain": [server],
           "server": "dns-direct"
         },
-        // 2. 私有域名用 dns-direct
+        // 2. 私有域名用 direct DNS
         {
           "rule_set": ["geosite-private"],
           "server": "dns-direct"
         },
-        // 3. 国内域名用 dns-direct
+        // 3. 被墙网站用 remote DNS (走代理解析)
         {
-          "rule_set": ["geosite-cn"],
+          "rule_set": ["geosite-gfw"],
+          "server": "dns-remote"
+        },
+        // 4. 国内域名用 direct DNS
+        {
+          "rule_set": ["geosite-geolocation-cn"],
           "server": "dns-direct"
         },
       ],
-      "final": "dns-remote",
-      "independent_cache": true
+      "final": "dns-remote"
     };
   }
 
-  /// Android 全局代理 DNS 配置 (参照 NekoBoxForAndroid)
+  /// Android 全局代理 DNS 配置 (参照 sing-box-for-android)
   static Map<String, dynamic> _getAndroidGlobalDnsConfig(NodeModel node) {
     final server = _extractServerFromNode(node);
     
     return {
       "servers": [
-        // 1. 直连 DNS (国内 DNS) - 通过物理接口
+        // 1. 国内 DNS (直连) - 用于代理服务器域名
         {
-          "address": "119.29.29.29",  // 腾讯 DNS
           "tag": "dns-direct",
-          "detour": "bypass"  // 使用 bypass (有 auto_detect_interface)
+          "address": "223.5.5.5",
+          "detour": "direct"
         },
-        // 2. 代理 DNS (国外 DNS, 用 UDP) - 走代理
+        // 2. 国外 DNS (走代理) - 用于其他域名
         {
-          "address": "1.1.1.1",
           "tag": "dns-remote",
-          "detour": "proxy"  // 走代理
-        },
-        // 3. Block DNS
-        {
-          "address": "rcode://success",
-          "tag": "dns-block"
+          "address": "8.8.8.8",
+          "detour": "proxy"
         },
       ],
       "rules": [
-        // 1. 代理服务器域名用 dns-direct (避免循环)
+        // 1. 代理服务器域名用 direct DNS (避免循环)
         {
-          "domain": ["full:$server"],
+          "domain": [server],
           "server": "dns-direct"
         }
       ],
-      "final": "dns-remote",
-      "independent_cache": true
+      "final": "dns-remote"
     };
   }
 
@@ -713,47 +725,41 @@ class NodeConfigConverter {
     return {
       "auto_detect_interface": true,
       "rules": [
-        // 0. 劫持 DNS 查询 (关键!)
+        // 0. DNS 劫持（使用 action，让 sing-box DNS 处理）
         {
           "protocol": ["dns"],
           "action": "hijack-dns"
         },
-        // 1. DNS 查询走 dns-out
+        // 1. 局域网 IP 直连（排除 TUN DNS）
         {
-          "outbound": "dns-out",
-          "port": [53]
-        },
-        // 2. 局域网 IP 优先直连 (必须在最前面!)
-        {
-          "outbound": "direct",
           "ip_cidr": [
             "192.168.0.0/16",
             "10.0.0.0/8", 
             "172.16.0.0/12",
             "127.0.0.0/8",
             "169.254.0.0/16"
-          ]
+          ],
+          "outbound": "direct"
         },
-        // 3. 私有 IP 直连 (使用 rule_set)
+        // 2. 私有 IP 直连 (使用 rule_set)
         {
-          "outbound": "bypass",
-          "rule_set": ["geosite-private"]
+          "rule_set": ["geosite-private"],
+          "outbound": "bypass"
         },
-        // 4. 国内域名直连 (使用 rule_set)
+        // 3. 被墙网站走代理 (关键！优先级高)
         {
-          "outbound": "bypass",
-          "rule_set": ["geosite-cn"]
+          "rule_set": ["geosite-gfw"],
+          "outbound": "proxy"
+        },
+        // 4. 国内域名直连 (使用更准确的 geolocation-cn)
+        {
+          "rule_set": ["geosite-geolocation-cn"],
+          "outbound": "bypass"
         },
         // 5. 国内 IP 直连 (使用 rule_set)
         {
-          "outbound": "bypass",
-          "rule_set": ["geoip-cn"]
-        },
-        // 6. 阻止多播
-        {
-          "outbound": "block",
-          "ip_cidr": ["224.0.0.0/3", "ff00::/8"],
-          "source_ip_cidr": ["224.0.0.0/3", "ff00::/8"]
+          "rule_set": ["geoip-cn"],
+          "outbound": "bypass"
         }
       ],
       "rule_set": [
@@ -764,10 +770,16 @@ class NodeConfigConverter {
           "path": "geosite-private.srs"  // 使用相对路径,sing-box 会在 working directory 查找
         },
         {
-          "tag": "geosite-cn",
+          "tag": "geosite-gfw",
           "type": "local",
           "format": "binary",
-          "path": "geosite-cn.srs"
+          "path": "geosite-gfw.srs"
+        },
+        {
+          "tag": "geosite-geolocation-cn",
+          "type": "local",
+          "format": "binary",
+          "path": "geosite-geolocation-cn.srs"
         },
         {
           "tag": "geoip-cn",
@@ -783,23 +795,24 @@ class NodeConfigConverter {
   /// Android 全局代理配置 (不使用本地规则文件)
   static Map<String, dynamic> _getAndroidGlobalRouteConfig() {
     return {
+      "auto_detect_interface": true,
       "rules": [
-        {"action": "sniff"},
-        {"protocol": ["dns"], "action": "hijack-dns"},
-        // 局域网 IP 直连
+        // 0. DNS 劫持（使用 action，让 sing-box DNS 处理）
         {
-          "outbound": "direct",
+          "protocol": ["dns"],
+          "action": "hijack-dns"
+        },
+        // 1. 局域网 IP 直连
+        {
           "ip_cidr": [
             "192.168.0.0/16",
             "10.0.0.0/8",
             "172.16.0.0/12",
             "127.0.0.0/8",
-            "169.254.0.0/16",
-            "224.0.0.0/4",
-            "240.0.0.0/4"
-          ]
-        },
-        {"outbound": "direct", "ip_is_private": true}
+            "169.254.0.0/16"
+          ],
+          "outbound": "direct"
+        }
       ],
       "final": "proxy"
     };
