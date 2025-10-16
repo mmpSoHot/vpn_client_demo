@@ -279,10 +279,6 @@ class NodeConfigConverter {
         {
           "type": "block",
           "tag": "block"
-        },
-        {
-          "type": "dns",
-          "tag": "dns-out"
         }
       ],
       "route": _getBypassCNRouteConfig(),
@@ -328,10 +324,6 @@ class NodeConfigConverter {
         {
           "type": "block",
           "tag": "block"
-        },
-        {
-          "type": "dns",
-          "tag": "dns-out"
         }
       ],
       "route": _getGlobalRouteConfig(),
@@ -422,8 +414,12 @@ class NodeConfigConverter {
           "rule_set": ["geosite-private"]
         },
         {
+          "server": "remote_dns",
+          "rule_set": ["geosite-gfw"]
+        },
+        {
           "server": "direct_dns",
-          "rule_set": ["geosite-cn"]
+          "rule_set": ["geosite-geolocation-cn"]
         }
       ],
       "final": "remote_dns",
@@ -526,8 +522,9 @@ class NodeConfigConverter {
           "domain": ["alidns.com", "doh.pub", "dot.pub", "360.cn", "onedns.net"],
           "domain_suffix": [".alidns.com", ".doh.pub", ".dot.pub", ".360.cn", ".onedns.net"]
         },
+        {"outbound": "proxy", "rule_set": ["geosite-gfw"]},
         {"outbound": "direct", "rule_set": ["geoip-cn"]},
-        {"outbound": "direct", "rule_set": ["geosite-cn"]}
+        {"outbound": "direct", "rule_set": ["geosite-geolocation-cn"]}
       ],
       "rule_set": [
         {
@@ -537,10 +534,16 @@ class NodeConfigConverter {
           "path": "$geoRuleBasePath/geosite/geosite-private.srs"
         },
         {
-          "tag": "geosite-cn",
+          "tag": "geosite-gfw",
           "type": "local",
           "format": "binary",
-          "path": "$geoRuleBasePath/geosite/geosite-cn.srs"
+          "path": "$geoRuleBasePath/geosite/geosite-gfw.srs"
+        },
+        {
+          "tag": "geosite-geolocation-cn",
+          "type": "local",
+          "format": "binary",
+          "path": "$geoRuleBasePath/geosite/geosite-geolocation-cn.srs"
         },
         {
           "tag": "geoip-cn",
