@@ -343,7 +343,7 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
     }
   }
 
-  /// 测试所有节点延迟
+  /// 测试所有节点延迟（使用快速批量测试）
   Future<void> _testAllNodesLatency() async {
     setState(() {
       // 开始测试：清空历史结果并进入全局测试中状态
@@ -352,31 +352,57 @@ class _NodeSelectionPageState extends State<NodeSelectionPage> {
     });
 
     try {
-      print('🔍 开始测试节点延迟...');
+      print('🔍 开始快速测试节点延迟...');
       
       // 只测试真实节点（跳过"自动选择"）
       final realNodes = _nodes.where((n) => n['type'] != 'auto').toList();
       
-      for (final nodeData in realNodes) {
-        final nodeModel = nodeData['nodeModel'] as NodeModel?;
-        if (nodeModel == null) continue;
-
-        // 测试延迟
-        final latency = await NodeLatencyTester.testNodeLatency(nodeModel);
-        
-        // 更新结果
-        setState(() {
-          _latencyResults[nodeData['name']] = latency;
-        });
+      // 提取 NodeModel 列表
+      final nodeModels = realNodes
+          .map((n) => n['nodeModel'] as NodeModel?)
+          .where((n) => n != null)
+          .cast<NodeModel>()
+          .toList();
+      
+      if (nodeModels.isEmpty) {
+        print('⚠️ 没有可测试的节点');
+        return;
       }
 
-      print('✅ 延迟测试完成');
+      // 使用快速批量测试（全并发）
+      final results = await NodeLatencyTester.testMultipleNodes(nodeModels);
+      
+      // 转换结果：使用 displayName 作为 key（因为 UI 显示时用的是 displayName）
+      final convertedResults = <String, int>{};
+      for (final nodeModel in nodeModels) {
+        final originalKey = nodeModel.name;  // 测试结果的 key
+        final displayKey = nodeModel.displayName;  // UI 显示的 key
+        if (results.containsKey(originalKey)) {
+          convertedResults[displayKey] = results[originalKey]!;
+        }
+      }
+      
+      // 更新结果
+      setState(() {
+        _latencyResults = convertedResults;
+      });
+
+      print('✅ 延迟测试完成，成功显示 ${convertedResults.length} 个节点的延迟');
       
       // 保存延迟结果
       await _saveLatencyResults();
       
     } catch (e) {
       print('❌ 测试延迟失败: $e');
+      // 显示错误提示
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('测试失败: $e'),
+            backgroundColor: const Color(0xFFF44336),
+          ),
+        );
+      }
     } finally {
       setState(() {
         _isTesting = false;

@@ -1,18 +1,16 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/node_model.dart';
 import 'singbox_manager.dart';
 
 /// 节点延迟测试工具
-/// 用于测试节点的响应速度（通过实际代理请求）
+/// 根据协议类型智能选择测试方法（Hysteria2用ICMP Ping，其他用TCP）
 class NodeLatencyTester {
   static const String _testUrl = 'https://www.gstatic.com/generate_204';
   static const int _testPort = 18808; // 临时测试端口
-  static const int _quickTimeoutSec = 3; // 快速探测超时
   static const int _fullTimeoutSec = 5;  // 全量代理测试超时
-  static const int _maxFullTests = 5;    // 进入第二阶段全量测试的节点数量
-  static const int _quickConcurrency = 8; // 快速探测并发
 
   /// 测试单个节点的延迟
   /// 返回延迟毫秒数，失败返回 -1
@@ -79,65 +77,155 @@ class NodeLatencyTester {
     }
   }
 
-  /// 测试多个节点的延迟（顺序测试，避免端口冲突）
+  /// 测试多个节点的延迟（快速并发 TCP 测试）
   /// 返回 Map<节点名称, 延迟ms>
   static Future<Map<String, int>> testMultipleNodes(
-      List<NodeModel> nodes) async {
+    List<NodeModel> nodes, {
+    bool useFullTest = false, // 是否使用完整的代理测试（慢但准确）
+  }) async {
     final results = <String, int>{};
 
-    print('🔍 开始测试 ${nodes.length} 个节点...');
+    print('🔍 开始快速测试 ${nodes.length} 个节点...');
 
-    // 第一阶段：快速 ICMP 探测（并发），得到粗略延迟
-    final quickLatencies = <String, int>{};
-    final futures = <Future<void>>[];
-    int inflight = 0;
-    for (final node in nodes) {
-      final host = _extractHostFromRaw(node.rawConfig);
-      if (host.isEmpty) {
-        quickLatencies[node.name] = -1;
-        continue;
+    // 根据协议类型选择测试方法（全并发）
+    final futures = nodes.map((node) async {
+      try {
+        final host = _extractHostFromRaw(node.rawConfig);
+        final port = _extractPortFromRaw(node.rawConfig);
+        
+        if (host.isEmpty || port <= 0) {
+          print('❌ [${node.name}] 无效配置');
+          return MapEntry(node.name, -1);
+        }
+
+        // 根据协议类型选择测试方法
+        int latency = -1;
+        final protocol = node.protocol.toLowerCase();
+        
+        if (protocol.contains('hysteria')) {
+          // Hysteria2 使用 ICMP Ping（UDP 探测包服务器不响应）
+          latency = await _testIcmpPing(host);
+        } else {
+          // VMess、VLESS、Trojan、Shadowsocks 等使用 TCP
+          latency = await _testTcpConnectivity(host, port);
+        }
+
+        print('${latency >= 0 ? "✅" : "❌"} ${node.name}: ${latency >= 0 ? "${latency}ms" : "超时"}');
+        return MapEntry(node.name, latency);
+      } catch (e) {
+        print('❌ [${node.name}] 测试出错: $e');
+        return MapEntry(node.name, -1);
       }
-      // 控制并发
-      if (inflight >= _quickConcurrency) {
-        await Future.wait(futures);
-        futures.clear();
-        inflight = 0;
-      }
-      inflight++;
-      futures.add(() async {
-        final ms = await _quickICMPPing(host, timeoutSec: _quickTimeoutSec);
-        quickLatencies[node.name] = ms;
-      }());
-    }
-    if (futures.isNotEmpty) {
-      await Future.wait(futures);
-    }
+    }).toList();
 
-    // 选出前 N 个进入第二阶段全量测试
-    final candidates = [...nodes];
-    candidates.sort((a, b) {
-      final la = quickLatencies[a.name] ?? 1 << 30;
-      final lb = quickLatencies[b.name] ?? 1 << 30;
-      return la.compareTo(lb);
-    });
-    final topN = candidates.take(_maxFullTests).toList();
-
-    print('⚡ 第一阶段完成，进入全量测试 Top ${topN.length} 个节点');
-
-    // 第二阶段：顺序执行真实代理请求测试（更准确）
-    for (final node in topN) {
-      final latency = await testNodeLatency(node);
-      results[node.name] = latency;
-      await Future.delayed(const Duration(milliseconds: 200));
+    // 等待所有测试完成（最多等待 3 秒）
+    try {
+      final entries = await Future.wait(futures).timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          print('⚠️ 测试超时，返回当前结果');
+          return [];
+        },
+      );
+      results.addEntries(entries);
+    } catch (e) {
+      print('❌ 批量测试出错: $e');
     }
 
-    // 其余未进入全量测试的节点，回填快速延迟
-    for (final node in nodes) {
-      results.putIfAbsent(node.name, () => quickLatencies[node.name] ?? -1);
-    }
-
-    print('✅ 所有节点测试完成');
+    print('✅ 所有节点测试完成，共测试 ${results.length} 个节点');
     return results;
+  }
+
+  /// 快速 TCP 端口连通性测试
+  /// 返回延迟毫秒数，失败返回 -1
+  static Future<int> _testTcpConnectivity(String host, int port) async {
+    try {
+      final stopwatch = Stopwatch()..start();
+      
+      final socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(milliseconds: 1500), // 1.5 秒超时
+      );
+      
+      stopwatch.stop();
+      socket.destroy();
+      
+      return stopwatch.elapsedMilliseconds;
+    } catch (e) {
+      return -1;
+    }
+  }
+
+  /// ICMP Ping 测试（用于 Hysteria2）
+  /// 返回延迟毫秒数，失败返回 -1
+  static Future<int> _testIcmpPing(String host) async {
+    try {
+      final result = await Process.run(
+        'ping',
+        Platform.isWindows
+            ? ['-n', '1', '-w', '1500', host]  // Windows: 1.5秒超时
+            : ['-c', '1', '-W', '1', host],    // Linux/Android: 1秒超时
+        runInShell: true,
+      ).timeout(const Duration(seconds: 2));
+
+      if (result.exitCode != 0) return -1;
+      
+      final output = (result.stdout ?? '').toString();
+
+      if (Platform.isWindows) {
+        // Windows: time=45ms 或 time<1ms 或 时间=45ms
+        final m = RegExp(r'time[=<](\d+)ms|时间[=<](\d+)ms', caseSensitive: false)
+            .firstMatch(output);
+        if (m != null) {
+          return int.tryParse(m.group(1) ?? m.group(2) ?? '0') ?? -1;
+        }
+      } else {
+        // Linux/Android: time=45.2 ms
+        final m = RegExp(r'time=(\d+\.?\d*)\s*ms').firstMatch(output);
+        if (m != null) {
+          return double.parse(m.group(1)!).round();
+        }
+      }
+      
+      return -1;
+    } catch (e) {
+      return -1;
+    }
+  }
+
+  /// 从原始配置中提取端口号
+  static int _extractPortFromRaw(String raw) {
+    try {
+      // VMess 协议特殊处理（Base64 编码）
+      if (raw.startsWith('vmess://')) {
+        try {
+          final base64Part = raw.substring('vmess://'.length).split('#')[0];
+          final decoded = utf8.decode(base64.decode(base64Part));
+          final config = json.decode(decoded) as Map<String, dynamic>;
+          final port = config['port'];
+          if (port != null) {
+            if (port is int) return port;
+            if (port is String) return int.tryParse(port) ?? -1;
+          }
+        } catch (e) {
+          print('❌ VMess 端口提取失败: $e');
+        }
+      }
+      
+      // 其他协议使用 URI 解析
+      final uri = Uri.parse(raw);
+      if (uri.port > 0) return uri.port;
+      
+      // 尝试从查询参数中提取
+      final port = uri.queryParameters['port'];
+      if (port != null) return int.tryParse(port) ?? -1;
+      
+      return -1;
+    } catch (e) {
+      print('❌ 端口提取失败: $e');
+      return -1;
+    }
   }
 
   /// 格式化延迟显示
@@ -175,40 +263,27 @@ class NodeLatencyTester {
   /// 从原始配置中提取主机名
   static String _extractHostFromRaw(String raw) {
     try {
+      // VMess 协议特殊处理（Base64 编码）
+      if (raw.startsWith('vmess://')) {
+        try {
+          final base64Part = raw.substring('vmess://'.length).split('#')[0];
+          final decoded = utf8.decode(base64.decode(base64Part));
+          final config = json.decode(decoded) as Map<String, dynamic>;
+          final add = config['add'];
+          if (add != null && add is String && add.isNotEmpty) {
+            return add;
+          }
+        } catch (e) {
+          print('❌ VMess 主机提取失败: $e');
+        }
+      }
+      
+      // 其他协议使用 URI 解析
       final uri = Uri.parse(raw);
       return uri.host;
-    } catch (_) {
+    } catch (e) {
+      print('❌ 主机提取失败: $e');
       return '';
-    }
-  }
-
-  /// 快速 ICMP 探测（不经过代理，粗略评估可达性）
-  static Future<int> _quickICMPPing(String host, {int timeoutSec = 3}) async {
-    try {
-      final result = await Process.run(
-        'ping',
-        Platform.isWindows
-            ? ['-n', '1', '-w', '${timeoutSec * 1000}', host]
-            : ['-c', '1', '-W', '$timeoutSec', host],
-        runInShell: true,
-      ).timeout(Duration(seconds: timeoutSec + 1));
-
-      if (result.exitCode != 0) return -1;
-      final output = (result.stdout ?? '').toString();
-
-      if (Platform.isWindows) {
-        final m = RegExp(r'time[=<](\d+)ms|时间[=<](\d+)ms', caseSensitive: false)
-            .firstMatch(output);
-        if (m != null) {
-          return int.tryParse(m.group(1) ?? m.group(2) ?? '0') ?? -1;
-        }
-      } else {
-        final m = RegExp(r'time=(\d+\.?\d*)\s*ms').firstMatch(output);
-        if (m != null) return double.parse(m.group(1)!).round();
-      }
-      return -1;
-    } catch (_) {
-      return -1;
     }
   }
 }
